@@ -46,7 +46,7 @@ class Settings(BaseSettings):
     max_tool_calls: int = 40
     max_run_seconds: int = 600
     max_run_cost_usd: float = 2.0
-    max_plan_steps: int = 6
+    max_plan_steps: int = 4
     max_turns_per_step: int = 8
     max_parallel_steps: int = 3
 
@@ -64,6 +64,8 @@ class Settings(BaseSettings):
     # MCP servers. Empty URL = run the server in-process (default for local/CI).
     mcp_github_url: str = ""
     mcp_analysis_url: str = ""
+    # Vulnerability database. Only package names and versions are sent. Empty URL disables it.
+    osv_api_url: str = "https://api.osv.dev"
     github_api_url: str = "https://api.github.com"
     github_token: str = ""
 

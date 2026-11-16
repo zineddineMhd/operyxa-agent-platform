@@ -17,6 +17,7 @@ _RESULT = re.compile(
 )
 _CATEGORY = {
     "unpinned-dependency": "dependencies",
+    "known-vulnerability": "dependencies",
     "unsafe-dependency-spec": "dependencies",
     "missing-lockfile": "dependencies",
     "invalid-manifest": "dependencies",
@@ -25,6 +26,7 @@ _CATEGORY = {
 }
 _ADVICE = {
     "unpinned-dependency": "Pin exact versions or commit a lockfile.",
+    "known-vulnerability": "Upgrade to a fixed version listed by the advisory.",
     "missing-lockfile": "Generate and commit a lockfile so builds are reproducible.",
     "env-file-committed": "Remove the file from git, rotate any secret it held, add it to .gitignore.",
     "docker-runs-as-root": "Add a non-root USER instruction.",
@@ -96,7 +98,8 @@ class DemoLLM:
     @staticmethod
     def _explore(names: set[str]) -> list[dict[str, Any]]:
         if "analysis__scan_dependencies" in names:
-            return [_call("analysis__scan_dependencies", {}), _call("analysis__check_config", {})]
+            wanted = ("scan_dependencies", "scan_vulnerabilities", "check_config")
+            return [_call(f"analysis__{t}", {}) for t in wanted if f"analysis__{t}" in names]
         return [
             _call("github__list_tree", {}),
             _call("github__list_commits", {"limit": 5}),

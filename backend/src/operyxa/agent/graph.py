@@ -20,6 +20,7 @@ from pydantic import ValidationError
 
 from operyxa.agent import prompts
 from operyxa.agent.budget import RunBudget
+from operyxa.agent.dedup import find_duplicates, merged_evidence
 from operyxa.agent.evidence import verify_finding
 from operyxa.agent.plan import validate_plan
 from operyxa.agent.react import StepInput, run_step
@@ -35,6 +36,16 @@ from operyxa.llm.base import MeteredLLM
 log = logging.getLogger(__name__)
 AVAILABLE_AGENTS = {"repository", "security"}
 MAX_PLAN_ATTEMPTS = 2
+
+
+def turns_per_step(max_llm_calls: int, steps: int, cap: int) -> int:
+    """Share the run's model-call budget between the steps of the plan.
+
+    Two calls are reserved for the planner and the reporter. Without this, the first steps of a
+    long plan spend the whole budget and the last ones never run. The final turn of a step forces
+    the structured result, so a step always concludes within its share.
+    """
+    return max(2, min(cap, (max_llm_calls - 2) // max(steps, 1)))
 
 
 def _merge(left: dict, right: dict) -> dict:
@@ -176,6 +187,11 @@ def build_graph(deps: RunDeps, checkpointer: Any):
                 {
                     "step": s,
                     "dependencies": {d: results[d].get("summary", "") for d in s["depends_on"]},
+                    "max_turns": turns_per_step(
+                        deps.budget.limits.max_llm_calls,
+                        len(state["plan"]["steps"]),
+                        settings.max_turns_per_step,
+                    ),
                 },
             )
             for s in ready[: settings.max_parallel_steps]
@@ -194,7 +210,7 @@ def build_graph(deps: RunDeps, checkpointer: Any):
                 llm=deps.llm,
                 gateway=deps.gateway,
                 ctx=ctx,
-                max_turns=settings.max_turns_per_step,
+                max_turns=payload.get("max_turns", settings.max_turns_per_step),
             )
         except STOPPING as exc:
             error, update["stop_reason"] = str(exc) or "cancelled", _stop_reason(exc)
@@ -228,7 +244,14 @@ def build_graph(deps: RunDeps, checkpointer: Any):
             status, checked = verify_finding(finding.evidence, calls)
             counts[status] += 1
             await store.set_finding(finding.id, status, checked)
-        await store.emit(run_id, "findings.verified", counts)
+        merged = 0
+        for kept, duplicates in find_duplicates(await store.list_findings(run_id)):
+            await store.set_finding(kept.id, "verified", merged_evidence(kept, duplicates))
+            for duplicate in duplicates:
+                await store.set_finding(duplicate.id, "duplicate", duplicate.evidence, kept.id)
+            merged += len(duplicates)
+        counts["verified"] -= merged
+        await store.emit(run_id, "findings.verified", {**counts, "duplicates_merged": merged})
         return {}
 
     async def reporter(state: RunState) -> dict[str, Any]:

@@ -9,14 +9,19 @@ from operyxa.gateway.providers import MCPProvider, ToolProvider
 from operyxa.mcp_servers.analysis_server import build_analysis_server
 from operyxa.mcp_servers.github_client import GitHubClient
 from operyxa.mcp_servers.github_server import build_github_server
+from operyxa.mcp_servers.osv import OSVClient
 
 
-def build_providers(settings: Settings, github: GitHubClient | None = None) -> list[ToolProvider]:
+def build_providers(
+    settings: Settings, github: GitHubClient | None = None, osv: OSVClient | None = None
+) -> list[ToolProvider]:
     """Remote MCP servers when URLs are configured, otherwise the same servers in-process."""
     client = github or GitHubClient.create(settings.github_api_url, settings.github_token)
+    if osv is None and settings.osv_api_url:
+        osv = OSVClient.create(settings.osv_api_url)
     return [
         MCPProvider("github", settings.mcp_github_url or build_github_server(client)),
-        MCPProvider("analysis", settings.mcp_analysis_url or build_analysis_server(client)),
+        MCPProvider("analysis", settings.mcp_analysis_url or build_analysis_server(client, osv)),
     ]
 
 

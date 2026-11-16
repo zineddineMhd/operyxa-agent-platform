@@ -40,7 +40,7 @@ export interface Report {
   body: {
     objective: string; repository: string; commit_sha: string; summary: string;
     recommendations: string[]; stop_reason: string | null; findings: Finding[];
-    unverified_findings: Finding[]; usage: Usage; disclaimer: string;
+    unverified_findings: Finding[]; duplicates_merged?: number; usage: Usage; disclaimer: string;
     steps: { id: string; agent: string; action: string; status: string; summary: string | null; error: string | null }[];
   };
 }

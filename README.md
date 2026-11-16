@@ -29,7 +29,7 @@ POST /api/v1/runs ──> PostgreSQL (runs = file d'attente) ──> worker
 | `worker/` | Prise en charge des runs, reprise après crash depuis les checkpoints LangGraph |
 | `agent/` | Graphe LangGraph, boucle ReAct, validation du plan, vérification des preuves, budgets |
 | `gateway/` | Point de passage unique vers les outils : catalogue de confiance, politique, redaction |
-| `mcp_servers/` | Serveurs MCP `github` (5 outils GET) et `analysis` (règles statiques) |
+| `mcp_servers/` | Serveurs MCP `github` (5 outils GET) et `analysis` (règles statiques, vulnérabilités connues via osv.dev) |
 | `llm/` | Interface modèle, client Gemini, modèle `demo` déterministe, mesure de consommation |
 
 ## Démarrage local
@@ -66,7 +66,7 @@ Documentation interactive de l'API : http://localhost:8000/docs.
 |---|---|---|
 | `demo` (défaut) | — | Modèle déterministe hors-ligne, sans clé ni coût |
 | `gemini` | `GEMINI_API_KEY`, `GEMINI_MODEL`, `GEMINI_FALLBACK_MODEL` | Palier gratuit : 20 requêtes/jour sur `gemini-3.8-flash`, soit environ un run. Régler `LLM_REQUESTS_PER_MINUTE=5` |
-| `openai_compatible` | `LLM_API_KEY`, `LLM_MODEL`, `LLM_BASE_URL` | NVIDIA NIM par défaut ; tout service compatible OpenAI avec appel d'outils. Non encore testé avec une vraie clé |
+| `openai_compatible` | `LLM_API_KEY`, `LLM_MODEL`, `LLM_BASE_URL` | NVIDIA NIM par défaut ; tout service compatible OpenAI avec appel d'outils. Testé avec `nvidia/nemotron-3-ultra-550b-a55b` (secours : `nvidia/nemotron-3.5-lightning-30b-a3b`) |
 
 Dépôts privés : définir `SECRETS_KEY` sur le serveur, puis saisir un jeton GitHub en lecture
 seule (Contents + Metadata) à la création du projet. Il est chiffré au repos et jamais renvoyé.

@@ -228,13 +228,17 @@ class RunStore:
             )
 
     async def set_finding(
-        self, finding_id: uuid.UUID, status: str, evidence: list[dict[str, Any]]
+        self,
+        finding_id: uuid.UUID,
+        status: str,
+        evidence: list[dict[str, Any]],
+        duplicate_of: uuid.UUID | None = None,
     ) -> None:
         async with self._db.session.begin() as s:
             await s.execute(
                 update(Finding)
                 .where(Finding.id == finding_id)
-                .values(status=status, evidence=evidence)
+                .values(status=status, evidence=evidence, duplicate_of=duplicate_of)
             )
 
     async def list_steps(self, run_id: uuid.UUID) -> list[RunStep]:

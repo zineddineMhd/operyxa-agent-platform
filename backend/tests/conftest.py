@@ -16,6 +16,7 @@ from operyxa.db.session import Database
 from operyxa.gateway.gateway import ToolGateway
 from operyxa.llm.demo import DemoLLM
 from operyxa.mcp_servers.github_client import GitHubClient
+from operyxa.mcp_servers.osv import OSVClient
 from operyxa.worker.runner import WorkerDeps
 
 HEAD = "a" * 40
@@ -103,6 +104,40 @@ class FakeGitHub:
         )
 
 
+def fake_osv() -> OSVClient:
+    """OSV stand-in: fastapi 0.110.0 has one advisory, every other package is clean."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        if body["package"]["name"] == "fastapi" and body["version"] == "0.110.0":
+            return httpx.Response(
+                200,
+                json={
+                    "vulns": [
+                        {
+                            "id": "GHSA-test-0001",
+                            "aliases": ["CVE-2099-0001"],
+                            "summary": "Denial of service in form parsing",
+                            "database_specific": {"severity": "HIGH"},
+                            "affected": [
+                                {
+                                    "package": {"name": "fastapi"},
+                                    "ranges": [
+                                        {"events": [{"introduced": "0"}, {"fixed": "0.110.1"}]}
+                                    ],
+                                }
+                            ],
+                        }
+                    ]
+                },
+            )
+        return httpx.Response(200, json={})
+
+    return OSVClient(
+        httpx.AsyncClient(base_url="https://osv.test", transport=httpx.MockTransport(handler))
+    )
+
+
 class ScriptedLLM:
     """Test model: `handler(names, messages, tool_choice)` returns a list of tool calls."""
 
@@ -161,7 +196,7 @@ def github() -> FakeGitHub:
 async def env(settings, db, github):
     """Everything a worker needs, wired on fakes."""
     store = RunStore(db)
-    gateway = ToolGateway(settings, store, build_providers(settings, github.client()))
+    gateway = ToolGateway(settings, store, build_providers(settings, github.client(), fake_osv()))
     await gateway.discover()
     return WorkerDeps(settings, db, store, gateway, DemoLLM(), InMemorySaver())
 

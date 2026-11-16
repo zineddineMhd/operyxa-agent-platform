@@ -128,7 +128,10 @@ export function ReportDetail() {
           <Panel>
             <div className="flex items-center justify-between border-b border-line px-6 py-5">
               <h2 className="font-medium">Verified findings</h2>
-              <span className="font-mono text-xs text-muted">{body.findings.length} · each quote confirmed in tool output</span>
+              <span className="font-mono text-xs text-muted">
+                {body.findings.length} · each quote confirmed in tool output
+                {!!body.duplicates_merged && ` · ${body.duplicates_merged} duplicate${body.duplicates_merged > 1 ? "s" : ""} merged`}
+              </span>
             </div>
             {body.findings.length === 0 && <Empty title="no verified finding.">Nothing the agents reported could be confirmed against tool output, or nothing was found.</Empty>}
             {body.findings.map((f) => <FindingCard key={f.id} finding={f} onEvidence={setEvidence} />)}

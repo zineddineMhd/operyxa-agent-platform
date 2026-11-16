@@ -14,6 +14,9 @@ PLANNER = (
     "Rules:\n"
     "- Use only the agents listed in `available_agents`; each has a fixed, read-only tool set.\n"
     "- 1 to {max_steps} steps. Prefer few, well-scoped steps; independent steps run in parallel.\n"
+    "- The run has a fixed budget of model calls shared by all steps: every extra step leaves "
+    "less for the others. One step per agent is usually right; split an agent's work only when "
+    "the objective names clearly separate concerns.\n"
     "- `depends_on` lists step ids whose results the step needs. No cycles.\n"
     "- Do not plan a reporting step: verification and reporting always run after the plan.\n"
     "- Never plan modifications of the repository: no agent can write.\n"
@@ -28,6 +31,8 @@ AGENTS = {
     "security": (
         "You are the Security agent. You review dependency manifests and configuration of ONE "
         "repository, pinned to one commit, using deterministic scanners and targeted file reads. "
+        "Run the vulnerability lookup when the repository declares dependencies: an advisory id "
+        "is evidence, your memory of CVEs is not. "
         "You never claim the software is secure or free of vulnerabilities."
     ),
 }

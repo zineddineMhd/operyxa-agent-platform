@@ -99,3 +99,27 @@ async def test_scanners_report_located_issues(env):
         "workflow-action-on-branch",
         "no-tests",
     } <= found
+
+
+async def test_vulnerability_lookup_reports_advisories_with_location(env):
+    ctx = await ctx_for(env, "security")
+    outcome = await env.gateway.call(ctx, "analysis.scan_vulnerabilities", {})
+    data = json.loads(outcome.text)
+    assert data["source"] == "osv.dev" and data["packages_checked"] == 2  # flask has no version
+    assert data["packages_not_checked"] == 1
+    (issue,) = data["issues"]
+    assert issue["rule"] == "known-vulnerability" and issue["severity_hint"] == "high"
+    assert issue["path"] == "requirements.txt" and issue["line"] == 1
+    assert issue["snippet"] == "fastapi==0.110.0" and issue["fixed_in"] == ["0.110.1"]
+    assert "GHSA-test-0001" in issue["message"] and issue["aliases"] == ["CVE-2099-0001"]
+
+
+def test_version_resolution():
+    from operyxa.mcp_servers.osv import ecosystem_of, resolved_version
+
+    assert resolved_version("==1.2.3") == ("1.2.3", True)
+    assert resolved_version("^4.17.1") == ("4.17.1", False)
+    assert resolved_version(">=2.0") == ("2.0", False)
+    assert resolved_version("") == (None, False) and resolved_version("latest") == (None, False)
+    assert ecosystem_of("api/requirements-dev.txt") == "PyPI"
+    assert ecosystem_of("web/package.json") == "npm" and ecosystem_of("go.mod") is None

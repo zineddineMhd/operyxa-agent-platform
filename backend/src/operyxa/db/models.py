@@ -202,9 +202,11 @@ class Finding(Base):
     category: Mapped[str] = mapped_column(String(32))
     description: Mapped[str] = mapped_column(Text)
     recommendation: Mapped[str] = mapped_column(Text, default="")
-    # draft -> verified | unverified. Only the deterministic verifier sets this.
+    # draft -> verified | unverified | duplicate. Only deterministic code sets this.
     status: Mapped[str] = mapped_column(String(16), default="draft")
     evidence: Mapped[list[dict[str, Any]]] = mapped_column(Json, default=list)
+    # Set when status is "duplicate": the finding this one was merged into.
+    duplicate_of: Mapped[uuid.UUID | None] = mapped_column(Uuid)
     created_at: Mapped[datetime] = _created()
     __table_args__ = (Index("idx_findings_run", "run_id", "created_at"),)
 

@@ -293,3 +293,74 @@ async def test_private_repository_uses_the_project_token_without_exposing_it(env
     events = [str(e.data) for e in await rows(env, RunEvent, run.id)]
     assert token not in "".join(seen + stored + events)
     assert "token" not in "".join(seen)  # the parameter itself is hidden from the model
+
+
+async def test_same_problem_reported_twice_is_merged(env):
+    """Both agents report the unpinned base image; the report keeps one, the most severe."""
+
+    def finding(evidence_id, title, severity):
+        return {
+            "title": title,
+            "severity": severity,
+            "category": "security",
+            "description": "The base image is not pinned.",
+            "evidence": [{"evidence_id": evidence_id, "quote": "FROM python:latest"}],
+        }
+
+    def handler(names, messages, tool_choice):
+        results = tool_results(messages)
+        if "analysis__check_config" in names:
+            if not results:
+                return [("analysis__check_config", {})]
+            return [
+                (
+                    "submit_step_result",
+                    {
+                        "summary": "done",
+                        "findings": [
+                            finding(
+                                results[0]["evidence_id"], "Unpinned Docker base image", "medium"
+                            )
+                        ],
+                    },
+                )
+            ]
+        if "github__list_commits" in names:
+            if not results:
+                return [("github__get_file", {"path": "Dockerfile"})]
+            return [
+                (
+                    "submit_step_result",
+                    {
+                        "summary": "done",
+                        "findings": [
+                            finding(
+                                results[0]["evidence_id"], "Dockerfile uses the latest tag", "high"
+                            )
+                        ],
+                    },
+                )
+            ]
+        return None
+
+    env.llm = ScriptedLLM(handler)
+    run = await make_run(env)
+    await execute_run(run.id, env)
+    findings = {f.title: f for f in await rows(env, Finding, run.id)}
+    kept, merged = (
+        findings["Dockerfile uses the latest tag"],
+        findings["Unpinned Docker base image"],
+    )
+    assert kept.status == "verified" and merged.status == "duplicate"
+    assert merged.duplicate_of == kept.id and len(kept.evidence) == 2
+    report = (await rows(env, Report, run.id))[0]
+    assert [f["title"] for f in report.body["findings"]] == ["Dockerfile uses the latest tag"]
+    assert report.body["duplicates_merged"] == 1 and not report.body["unverified_findings"]
+
+
+async def test_demo_run_reports_the_known_vulnerability(env):
+    run = await make_run(env)
+    await execute_run(run.id, env)
+    vulnerable = [f for f in await rows(env, Finding, run.id) if "GHSA-test-0001" in f.title]
+    assert len(vulnerable) == 1 and vulnerable[0].status == "verified"
+    assert vulnerable[0].severity == "high" and vulnerable[0].evidence[0]["start_line"] == 1

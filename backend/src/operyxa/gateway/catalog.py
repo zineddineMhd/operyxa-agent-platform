@@ -32,6 +32,7 @@ CATALOG: dict[str, dict[str, tuple[Risk, frozenset[str]]]] = {
     "analysis": {
         "scan_dependencies": ("moderate", frozenset({"security"})),
         "check_config": ("moderate", frozenset({"security"})),
+        "scan_vulnerabilities": ("moderate", frozenset({"security"})),
     },
 }
 

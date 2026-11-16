@@ -204,3 +204,12 @@ async def test_quota_error_moves_to_fallback_or_waits_on_last_model():
     ai = await ResilientLLM([main, backup], 3, 0, quota_wait_seconds=0).invoke([], [])
     assert main.calls == 1  # no retries wasted on a spent quota
     assert backup.calls == 2 and ai.response_metadata["served_by"] == "backup"
+
+
+def test_model_call_budget_is_shared_between_steps():
+    from operyxa.agent.graph import turns_per_step
+
+    assert turns_per_step(20, 2, 8) == 8  # short plan: the per-step cap applies
+    assert turns_per_step(20, 4, 8) == 4  # 4 steps x 4 turns + planner + reporter = 18 <= 20
+    assert turns_per_step(20, 6, 8) == 3
+    assert turns_per_step(6, 4, 8) == 2  # never below the minimum needed to act then conclude

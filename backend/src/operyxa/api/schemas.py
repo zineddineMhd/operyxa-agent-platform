@@ -186,6 +186,7 @@ class FindingOut(Out):
     description: str
     recommendation: str
     status: str
+    duplicate_of: uuid.UUID | None
     evidence: list[dict[str, Any]]
 
 

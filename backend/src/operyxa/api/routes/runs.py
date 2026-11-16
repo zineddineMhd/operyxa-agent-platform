@@ -203,7 +203,9 @@ async def get_evidence(run: OwnedRun, evidence_id: str, db: Db) -> ToolCall:
 
 @router.get("/runs/{run_id}/findings", response_model=list[FindingOut])
 async def list_findings(
-    run: OwnedRun, db: Db, status: Literal["verified", "unverified", "draft"] | None = None
+    run: OwnedRun,
+    db: Db,
+    status: Literal["verified", "unverified", "duplicate", "draft"] | None = None,
 ) -> list:
     query = select(Finding).where(Finding.run_id == run.id)
     if status:

@@ -47,7 +47,7 @@ function describe(event: RunEvent): { text: string; detail: string } | null {
     case "approval.approved": return { text: `${d.tool} approved`, detail: "approval.approved" };
     case "approval.rejected": return { text: `${d.tool} rejected by the reviewer`, detail: "approval.rejected" };
     case "approval.expired": return { text: `Approval for ${d.tool} expired`, detail: "approval.expired" };
-    case "findings.verified": return { text: "Evidence verified", detail: `${d.verified} verified · ${d.unverified} unverified` };
+    case "findings.verified": return { text: "Evidence verified", detail: `${d.verified} verified · ${d.unverified} unverified${d.duplicates_merged ? ` · ${d.duplicates_merged} merged` : ""}` };
     case "report.ready": return { text: d.partial ? "Partial report saved" : "Report saved", detail: `${d.verified_findings} verified findings` };
     case "run.completed": return { text: "Run completed", detail: "run.completed" };
     case "run.failed": return { text: "Run stopped", detail: String(d.stop_reason ?? "run.failed") };

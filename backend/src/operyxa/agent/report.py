@@ -54,7 +54,8 @@ def build_body(
             for s in steps
         ],
         "findings": [finding_view(f) for f in ordered if f.status == "verified"],
-        "unverified_findings": [finding_view(f) for f in ordered if f.status != "verified"],
+        "unverified_findings": [finding_view(f) for f in ordered if f.status == "unverified"],
+        "duplicates_merged": sum(1 for f in findings if f.status == "duplicate"),
         "usage": counters,
         "disclaimer": "Automated review. It does not certify the security of the software "
         "nor guarantee the absence of vulnerabilities.",

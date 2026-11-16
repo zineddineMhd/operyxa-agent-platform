@@ -52,8 +52,21 @@ Le modèle `demo` ne pouvait pas révéler ces défauts ; tous sont corrigés et
 
 Un run complet sur le dépôt de test consomme environ 16 appels LLM et 27 000 tokens en entrée :
 le budget par défaut de 20 appels est juste, et le palier gratuit de `gemini-3.8-flash` ne permet
-qu'environ un run par jour. Les deux agents signalent parfois le même problème : une
-déduplication des findings reste à faire.
+qu'environ un run par jour.
+
+Même run sur NVIDIA (`nvidia/nemotron-3-ultra-550b-a55b`) : 20 appels LLM, 65 000 tokens en
+entrée, 25 constats tous vérifiés mais largement redondants, quatre étapes planifiées dont trois
+pour le même agent. D'où la déduplication déterministe ajoutée ensuite (`agent/dedup.py`) : deux
+constats dont la preuve principale désigne le même fichier et la même ligne sont fusionnés, le
+plus sévère est conservé. Sur les 7 modèles NVIDIA essayés, 3 gèrent l'appel d'outils dans les
+délais ; les 4 autres n'ont pas répondu en 90 secondes.
+
+Un second run a épuisé le budget avant l'étape sécurité : le budget d'appels est désormais
+réparti entre les étapes du plan (`turns_per_step`) et le plan est limité à 4 étapes. Résultat du
+run suivant, avec osv.dev réel : terminé en 14 appels, 8 constats vérifiés, 2 doublons fusionnés,
+3 affirmations non vérifiées écartées des conclusions (dont un « secret en dur » de sévérité
+critique dont la citation ne correspondait pas à la sortie d'outil — à examiner : la redaction
+des secrets modifie le texte que le modèle doit citer).
 
 ## 3 bis. Ce qui reste à faire côté backend
 
@@ -63,8 +76,9 @@ déduplication des findings reste à faire.
 | Haute | Consentement LLM | Le code d'un dépôt privé est envoyé au fournisseur du modèle. À afficher et faire accepter par projet ; vérifier les conditions d'usage des données du palier utilisé (le palier gratuit Gemini n'offre pas les mêmes garanties que le payant). |
 | Moyenne | GitHub App | Les dépôts privés passent aujourd'hui par un jeton par projet, chiffré au repos. Une GitHub App éviterait de stocker un jeton durable. |
 | Moyenne | Refresh tokens, limitation de débit sur `/auth/*` | À décider selon le mode de déploiement. |
-| Moyenne | Vulnérabilités connues | `scan_dependencies` contrôle l'hygiène (versions non figées, lockfile). Ajouter une source CVE (OSV). |
-| Moyenne | Déduplication des findings, jeu de cas d'évaluation | Pour comparer modèles et réglages de budget. |
+| Moyenne | Vulnérabilités : lire les lockfiles | `scan_vulnerabilities` interroge osv.dev à partir des manifestes. Pour une plage (`^1.2`, `>=2.0`) il teste la version minimale autorisée ; lire le lockfile donnerait la version réellement installée. |
+| Moyenne | Jeu de cas d'évaluation | Pour comparer modèles et réglages de budget, et mesurer les fusions à tort de la déduplication. |
+| Moyenne | Citations de texte masqué | Quand un secret est masqué, le modèle cite parfois le texte d'origine supposé : le constat part en « non vérifié ». Le guider dans le prompt, ou accepter la citation de la ligne masquée. |
 | Basse | Observabilité (OpenTelemetry), rétention/purge, export PDF, LISTEN/NOTIFY pour le SSE | V1. |
 
 ## 4. Planning : ajustements proposés
