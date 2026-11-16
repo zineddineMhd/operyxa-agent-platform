@@ -1,0 +1,57 @@
+@import "tailwindcss";
+@import "@fontsource-variable/space-grotesk";
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/jetbrains-mono";
+
+@theme {
+  --font-display: "Space Grotesk Variable", system-ui, sans-serif;
+  --font-sans: "Inter Variable", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
+
+  --color-ink: #0a0b0f;
+  --color-panel: #0e0f14;
+  --color-raised: #15161d;
+  --color-line: #1f2029;
+  --color-line-strong: #2c2e3a;
+  --color-fg: #ececf1;
+  --color-muted: #a0a1ad;
+  --color-faint: #6f717d;
+  --color-violet: #6c56e8;
+  --color-violet-hover: #7a66f0;
+  --color-violet-soft: #a99df8;
+  --color-teal: #22c3a6;
+  --color-amber: #e9a94a;
+  --color-red: #ea7480;
+}
+
+html {
+  background: var(--color-ink);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+body {
+  min-height: 100dvh;
+}
+:focus-visible {
+  outline: 2px solid var(--color-violet-soft);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+::selection {
+  background: color-mix(in srgb, var(--color-violet) 45%, transparent);
+}
+/* Grid items may shrink below their content width, so long text truncates instead of overflowing. */
+.grid > * {
+  min-width: 0;
+}
+.dot-grid {
+  background-image: radial-gradient(circle, #1c1d26 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
