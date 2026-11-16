@@ -1,0 +1,216 @@
+"""Business tables. LangGraph checkpoints live in their own tables, managed by the checkpointer."""
+
+import uuid
+from datetime import UTC, datetime
+from typing import Any
+
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    Uuid,
+)
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+Json = JSON().with_variant(JSONB(), "postgresql")
+BigId = BigInteger().with_variant(Integer(), "sqlite")
+
+RUN_STATUSES = ("pending", "running", "waiting_approval", "completed", "failed", "cancelled")
+TERMINAL_STATUSES = ("completed", "failed", "cancelled")
+
+
+def utcnow() -> datetime:
+    return datetime.now(UTC)
+
+
+def aware(value: datetime) -> datetime:
+    """SQLite returns naive datetimes; everything we store is UTC."""
+    return value if value.tzinfo else value.replace(tzinfo=UTC)
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+def _pk() -> Mapped[uuid.UUID]:
+    return mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+
+
+def _created() -> Mapped[datetime]:
+    return mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class User(Base):
+    __tablename__ = "users"
+    id: Mapped[uuid.UUID] = _pk()
+    email: Mapped[str] = mapped_column(String(320), unique=True)
+    password_hash: Mapped[str] = mapped_column(String(255))
+    role: Mapped[str] = mapped_column(String(32), default="developer")
+    created_at: Mapped[datetime] = _created()
+
+
+class Project(Base):
+    __tablename__ = "projects"
+    id: Mapped[uuid.UUID] = _pk()
+    owner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(String(200))
+    repo_owner: Mapped[str] = mapped_column(String(100))
+    repo_name: Mapped[str] = mapped_column(String(100))
+    created_at: Mapped[datetime] = _created()
+    __table_args__ = (Index("idx_projects_owner_created", "owner_id", "created_at"),)
+
+
+class Run(Base):
+    __tablename__ = "runs"
+    id: Mapped[uuid.UUID] = _pk()
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
+    created_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    thread_id: Mapped[str] = mapped_column(String(255), unique=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(128))
+    objective: Mapped[str] = mapped_column(Text)
+    workflow_type: Mapped[str] = mapped_column(String(64), default="repository_analysis")
+    options: Mapped[dict[str, Any]] = mapped_column(Json, default=dict)
+    limits: Mapped[dict[str, Any]] = mapped_column(Json, default=dict)
+    status: Mapped[str] = mapped_column(String(32), default="pending")
+    stop_reason: Mapped[str | None] = mapped_column(String(64))
+    error: Mapped[dict[str, Any] | None] = mapped_column(Json)
+    # The analysed commit is pinned when the run starts, so evidence stays reproducible.
+    commit_sha: Mapped[str | None] = mapped_column(String(64))
+    plan: Mapped[dict[str, Any] | None] = mapped_column(Json)
+    locked_by: Mapped[str | None] = mapped_column(String(100))
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cancel_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = _created()
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (
+        Index("idx_runs_project_created", "project_id", "created_at"),
+        Index("idx_runs_status_created", "status", "created_at"),
+        UniqueConstraint("created_by", "idempotency_key", name="uq_runs_idempotency"),
+        CheckConstraint(
+            "status IN ('pending','running','waiting_approval','completed','failed','cancelled')",
+            name="runs_status_check",
+        ),
+    )
+
+
+class RunStep(Base):
+    __tablename__ = "run_steps"
+    id: Mapped[uuid.UUID] = _pk()
+    run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"))
+    step_key: Mapped[str] = mapped_column(String(64))
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    agent: Mapped[str] = mapped_column(String(32))
+    action: Mapped[str] = mapped_column(Text)
+    depends_on: Mapped[list[str]] = mapped_column(Json, default=list)
+    status: Mapped[str] = mapped_column(String(32), default="pending")
+    summary: Mapped[str | None] = mapped_column(Text)
+    error: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (UniqueConstraint("run_id", "step_key", name="uq_run_steps_key"),)
+
+
+class RunEvent(Base):
+    """Append-only event log. `id` is the SSE cursor (Last-Event-ID)."""
+
+    __tablename__ = "run_events"
+    id: Mapped[int] = mapped_column(BigId, primary_key=True, autoincrement=True)
+    run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"))
+    type: Mapped[str] = mapped_column(String(64))
+    data: Mapped[dict[str, Any]] = mapped_column(Json, default=dict)
+    created_at: Mapped[datetime] = _created()
+    __table_args__ = (Index("idx_run_events_run_id", "run_id", "id"),)
+
+
+class ToolCall(Base):
+    """One gateway decision + execution. A completed call is also a piece of evidence."""
+
+    __tablename__ = "tool_calls"
+    id: Mapped[uuid.UUID] = _pk()
+    run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"))
+    evidence_id: Mapped[str] = mapped_column(String(32))
+    step_key: Mapped[str] = mapped_column(String(64))
+    agent: Mapped[str] = mapped_column(String(32))
+    tool: Mapped[str] = mapped_column(String(128))
+    args: Mapped[dict[str, Any]] = mapped_column(Json, default=dict)
+    idempotency_key: Mapped[str] = mapped_column(String(64))
+    risk: Mapped[str] = mapped_column(String(16))
+    decision: Mapped[str] = mapped_column(String(32))
+    status: Mapped[str] = mapped_column(String(16))  # completed | failed | rejected
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    result_text: Mapped[str | None] = mapped_column(Text)
+    result_hash: Mapped[str | None] = mapped_column(String(64))
+    truncated: Mapped[bool] = mapped_column(Boolean, default=False)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    duration_ms: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = _created()
+    __table_args__ = (
+        Index("idx_tool_calls_run_created", "run_id", "created_at"),
+        UniqueConstraint("run_id", "evidence_id", name="uq_tool_calls_evidence"),
+    )
+
+
+class Finding(Base):
+    __tablename__ = "findings"
+    id: Mapped[uuid.UUID] = _pk()
+    run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"))
+    step_key: Mapped[str] = mapped_column(String(64))
+    agent: Mapped[str] = mapped_column(String(32))
+    title: Mapped[str] = mapped_column(String(300))
+    severity: Mapped[str] = mapped_column(String(16))
+    category: Mapped[str] = mapped_column(String(32))
+    description: Mapped[str] = mapped_column(Text)
+    recommendation: Mapped[str] = mapped_column(Text, default="")
+    # draft -> verified | unverified. Only the deterministic verifier sets this.
+    status: Mapped[str] = mapped_column(String(16), default="draft")
+    evidence: Mapped[list[dict[str, Any]]] = mapped_column(Json, default=list)
+    created_at: Mapped[datetime] = _created()
+    __table_args__ = (Index("idx_findings_run", "run_id", "created_at"),)
+
+
+class Report(Base):
+    __tablename__ = "reports"
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("runs.id", ondelete="CASCADE"), primary_key=True
+    )
+    partial: Mapped[bool] = mapped_column(Boolean, default=False)
+    summary: Mapped[str] = mapped_column(Text)
+    body: Mapped[dict[str, Any]] = mapped_column(Json, default=dict)
+    markdown: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = _created()
+
+
+class LLMUsage(Base):
+    __tablename__ = "llm_usage"
+    id: Mapped[uuid.UUID] = _pk()
+    run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"))
+    step_key: Mapped[str] = mapped_column(String(64))
+    model: Mapped[str] = mapped_column(String(100))
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    estimated_cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    created_at: Mapped[datetime] = _created()
+    __table_args__ = (Index("idx_llm_usage_run", "run_id"),)
+
+
+class AuditEvent(Base):
+    __tablename__ = "audit_events"
+    id: Mapped[int] = mapped_column(BigId, primary_key=True, autoincrement=True)
+    actor_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    action: Mapped[str] = mapped_column(String(64))
+    resource_type: Mapped[str] = mapped_column(String(32))
+    resource_id: Mapped[str] = mapped_column(String(64))
+    data: Mapped[dict[str, Any]] = mapped_column(Json, default=dict)
+    created_at: Mapped[datetime] = _created()
+    __table_args__ = (Index("idx_audit_resource", "resource_type", "resource_id"),)

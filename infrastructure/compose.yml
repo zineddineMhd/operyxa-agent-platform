@@ -1,0 +1,39 @@
+# Local stack: docker compose -f infrastructure/compose.yml up --build
+# Redis is intentionally absent from the MVP: PostgreSQL is the queue and the event log.
+x-backend: &backend
+  build: ../backend
+  env_file: [{path: ../.env, required: false}]
+  environment:
+    DATABASE_URL: postgresql+psycopg://operyxa:operyxa@postgres:5432/operyxa
+  depends_on:
+    migrate: {condition: service_completed_successfully}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment: {POSTGRES_USER: operyxa, POSTGRES_PASSWORD: operyxa, POSTGRES_DB: operyxa}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    ports: ["5432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U operyxa"]
+      interval: 3s
+      retries: 20
+
+  migrate:
+    build: ../backend
+    command: alembic upgrade head
+    environment:
+      DATABASE_URL: postgresql+psycopg://operyxa:operyxa@postgres:5432/operyxa
+    depends_on:
+      postgres: {condition: service_healthy}
+
+  api:
+    <<: *backend
+    ports: ["8000:8000"]
+
+  worker:
+    <<: *backend
+    command: python -m operyxa.worker
+
+volumes:
+  pgdata:
