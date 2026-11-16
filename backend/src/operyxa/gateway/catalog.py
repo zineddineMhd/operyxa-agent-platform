@@ -14,7 +14,7 @@ Decision = Literal["allow", "deny", "approval_required"]
 
 # Parameters the gateway injects from the run's scope. They are stripped from the schema shown
 # to the model, so the model cannot even express "another repository".
-SCOPE_PARAMS = ("owner", "repo", "ref")
+SCOPE_PARAMS = ("owner", "repo", "ref", "token")
 
 # server -> tool -> (risk, agents allowed to call it)
 CATALOG: dict[str, dict[str, tuple[Risk, frozenset[str]]]] = {
@@ -24,6 +24,10 @@ CATALOG: dict[str, dict[str, tuple[Risk, frozenset[str]]]] = {
         "get_file": ("low", frozenset({"repository", "security"})),
         "list_commits": ("low", frozenset({"repository"})),
         "get_commit_diff": ("low", frozenset({"repository"})),
+    },
+    # Not served yet: listed so the policy is in place the day a sandboxed runner is connected.
+    "test_runner": {
+        "run_test_profile": ("high", frozenset({"testing"})),
     },
     "analysis": {
         "scan_dependencies": ("moderate", frozenset({"security"})),
@@ -96,7 +100,7 @@ def describe_catalog() -> list[dict[str, Any]]:
                     "risk": risk,
                     "policy": policy,
                     "agents": sorted(agents - {"system"}),
-                    "access": "read-only",
+                    "access": "execute" if risk == "high" else "read-only",
                 }
             )
     return out

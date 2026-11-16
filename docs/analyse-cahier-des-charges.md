@@ -22,7 +22,7 @@ relevés, avec la décision retenue dans le code. La partie UX/UI n'est pas trai
 | 12 | Modèle de données : `approvals`, `tool_calls`, `findings` sans statut, expiration, durée, ni clé d'idempotence ; pas d'`Idempotency-Key` sur `POST /runs`. | Colonnes ajoutées (voir `db/models.py`) ; `POST /runs` idempotent par en-tête `Idempotency-Key`. |
 | 13 | `EventSource` ne peut pas envoyer d'en-tête `Authorization` : le SSE authentifié par JWT ne marche pas tel quel. | Le flux accepte `Last-Event-ID` **et** `?after=` ; le frontend utilisera `fetch` en streaming. Endpoint `events/history` en JSON pour la reprise. |
 | 14 | Aucun endpoint pour ouvrir une preuve, alors que c'est la promesse centrale. | `GET /runs/{id}/evidence/{evidence_id}`, `GET /runs/{id}/findings`, `GET /runs/{id}/report.md`. |
-| 15 | §10.1 mêle callback OAuth et `installation_id` (GitHub App) : deux modèles d'accès différents. | Recommandation : **GitHub App** (permissions fines en lecture, jetons d'installation courts, rien de durable à stocker). Non implémenté — voir §3. |
+| 15 | §10.1 mêle callback OAuth et `installation_id` (GitHub App) : deux modèles d'accès différents. | Pour l'instant : jeton GitHub en lecture seule par projet, chiffré au repos, injecté par la passerelle et invisible du modèle. Cible : **GitHub App** — voir §3 bis. |
 
 ## 2. Écarts assumés par rapport au cahier des charges
 
@@ -32,22 +32,39 @@ relevés, avec la décision retenue dans le code. La partie UX/UI n'est pas trai
 - **Serveur MCP GitHub maison** (5 outils GET) plutôt qu'un serveur GitHub généraliste : ce qui
   n'est pas exposé ne peut pas être détourné. Un serveur tiers reste branchable (`MCP_GITHUB_URL`),
   filtré par le catalogue de confiance.
-- **Tables repoussées en V1** : `mcp_servers`, `tool_policies`, `workflows`, `approvals`,
+- **Tables repoussées en V1** : `mcp_servers`, `tool_policies`, `workflows`,
   `github_connections`, `artifacts`. Au MVP le catalogue d'outils et la politique sont du code
   versionné et testé (`gateway/catalog.py`), pas de la configuration modifiable à chaud.
 - **Agents du MVP** : `repository` et `security`. `testing` (F-07) attend le sandbox V1 ; l'option
   `run_tests` est refusée par l'API tant qu'il n'existe pas.
 
-## 3. Ce qui reste à faire côté backend
+## 3. Enseignements du premier run réel avec Gemini
+
+Le modèle `demo` ne pouvait pas révéler ces défauts ; tous sont corrigés et couverts par un test.
+
+| Constat réel | Correction |
+|---|---|
+| HTTP 503 « high demand » fréquents, et un appel resté bloqué sans réponse | Réessais avec temporisation, délai maximal par appel, modèle de secours (`GEMINI_FALLBACK_MODEL`), motif d'arrêt `llm_unavailable` |
+| Schéma d'outil refusé (400) : la propriété `title` des findings était supprimée par erreur | Seules les métadonnées JSON-schema sont retirées ; les erreurs 4xx ne sont plus réessayées |
+| Palier gratuit : **20 requêtes par jour** et 5 par minute sur `gemini-3.8-flash` | Limiteur de débit par modèle (`LLM_REQUESTS_PER_MINUTE`) ; sur quota épuisé, bascule immédiate vers le modèle de secours |
+| Plan rejeté parce que le modèle écrit des identifiants longs ou avec majuscules | Les identifiants sont normalisés côté serveur au lieu de rejeter le plan |
+| Le modèle a tenté deux fois de lire `.env` | Refus `SENSITIVE_PATH_DENIED` : la politique a tenu sans dépendre du prompt |
+
+Un run complet sur le dépôt de test consomme environ 16 appels LLM et 27 000 tokens en entrée :
+le budget par défaut de 20 appels est juste, et le palier gratuit de `gemini-3.8-flash` ne permet
+qu'environ un run par jour. Les deux agents signalent parfois le même problème : une
+déduplication des findings reste à faire.
+
+## 3 bis. Ce qui reste à faire côté backend
 
 | Priorité | Sujet | Note |
 |---|---|---|
-| Haute | Tester avec une vraie clé Gemini | Le client Gemini est écrit et la liaison des outils vérifiée hors-ligne, mais **aucun appel réel** n'a été fait. Prévoir un jeu de cas de référence (qualité du plan, taux de findings vérifiés, coût). |
-| Haute | Connexion GitHub App | Aujourd'hui : dépôts publics ou `GITHUB_TOKEN` unique côté serveur. Les dépôts privés multi-utilisateurs exigent l'App + un jeton par installation. |
-| Haute | Consentement LLM | Le code d'un dépôt privé est envoyé à Google. À afficher et faire accepter par projet ; vérifier les conditions d'usage des données du palier Gemini utilisé. |
-| Moyenne | Refresh tokens, limitation de débit sur `/auth/*` | À décider avec le frontend (cookie httpOnly ou en-tête). |
-| Moyenne | Approbations (F-09) | La politique renvoie déjà `approval_required` pour le risque élevé (refus au MVP). Reste : table `approvals` (hash des arguments, expiration), `interrupt()` LangGraph, endpoint de décision. |
-| Moyenne | Vulnérabilités connues | `scan_dependencies` contrôle l'hygiène (versions non figées, lockfile). Ajouter une source CVE (OSV) avec contrôle de destination réseau. |
+| Haute | Sandbox d'exécution de tests (F-07) | Le circuit d'approbation est en place et testé avec un faux exécuteur. Il manque le serveur MCP `test_runner` réel : conteneur sans réseau, sans secrets, utilisateur non privilégié, profils autorisés. À développer et tester sur une machine avec Docker. |
+| Haute | Consentement LLM | Le code d'un dépôt privé est envoyé au fournisseur du modèle. À afficher et faire accepter par projet ; vérifier les conditions d'usage des données du palier utilisé (le palier gratuit Gemini n'offre pas les mêmes garanties que le payant). |
+| Moyenne | GitHub App | Les dépôts privés passent aujourd'hui par un jeton par projet, chiffré au repos. Une GitHub App éviterait de stocker un jeton durable. |
+| Moyenne | Refresh tokens, limitation de débit sur `/auth/*` | À décider selon le mode de déploiement. |
+| Moyenne | Vulnérabilités connues | `scan_dependencies` contrôle l'hygiène (versions non figées, lockfile). Ajouter une source CVE (OSV). |
+| Moyenne | Déduplication des findings, jeu de cas d'évaluation | Pour comparer modèles et réglages de budget. |
 | Basse | Observabilité (OpenTelemetry), rétention/purge, export PDF, LISTEN/NOTIFY pour le SSE | V1. |
 
 ## 4. Planning : ajustements proposés

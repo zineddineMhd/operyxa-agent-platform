@@ -42,8 +42,9 @@ def check_path(path: str) -> str:
 
 
 class GitHubClient:
-    def __init__(self, http: httpx.AsyncClient):
+    def __init__(self, http: httpx.AsyncClient, token: str = ""):
         self._http = http
+        self._token = token
 
     @classmethod
     def create(cls, api_url: str, token: str = "", timeout: float = 20.0) -> "GitHubClient":
@@ -52,13 +53,17 @@ class GitHubClient:
             "X-GitHub-Api-Version": "2022-11-28",
             "User-Agent": "repo-analysis-agent",
         }
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
         # follow_redirects stays off: a redirect must never carry the token to another host.
-        return cls(httpx.AsyncClient(base_url=api_url, headers=headers, timeout=timeout))
+        return cls(httpx.AsyncClient(base_url=api_url, headers=headers, timeout=timeout), token)
+
+    def with_token(self, token: str) -> "GitHubClient":
+        """Same connection pool, another identity: the token of the project being analysed."""
+        return GitHubClient(self._http, token) if token else self
 
     async def _get(self, url: str, *, params: dict | None = None, raw: bool = False) -> Any:
-        headers = {"Accept": "application/vnd.github.raw+json"} if raw else None
+        headers = {"Accept": "application/vnd.github.raw+json"} if raw else {}
+        if self._token:
+            headers["Authorization"] = f"Bearer {self._token}"
         try:
             resp = await self._http.get(url, params=params, headers=headers)
         except httpx.HTTPError as exc:

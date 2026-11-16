@@ -6,9 +6,10 @@ import { api, type CatalogTool } from "../lib/api";
 const SERVERS: Record<string, { code: string; name: string }> = {
   github: { code: "GH", name: "GitHub" },
   analysis: { code: "CA", name: "Code Analysis" },
+  test_runner: { code: "TR", name: "Test Runner" },
 };
 const RISK: Record<string, string> = { low: "text-teal", moderate: "text-fg", high: "text-amber", critical: "text-red" };
-const POLICY: Record<string, string> = { allow: "Allow · read", approval_required: "Approval required", deny: "Disabled" };
+const POLICY: Record<string, string> = { allow: "Allow · read", approval_required: "Approval · sandbox profile", deny: "Disabled" };
 const TH = "px-6 py-3.5 font-normal";
 
 function ServerCard({ code, name, tools, status, scope, tone }: { code: string; name: string; tools: string; status: string; scope: string; tone?: "amber" }) {
@@ -29,7 +30,10 @@ function ServerCard({ code, name, tools, status, scope, tone }: { code: string; 
 export function McpHub() {
   const tools = useQuery({ queryKey: ["tools"], queryFn: api.tools });
   const byServer = new Map<string, CatalogTool[]>();
-  for (const tool of tools.data?.tools ?? []) byServer.set(tool.server, [...(byServer.get(tool.server) ?? []), tool]);
+  // A server whose tools all need an approval is listed by policy but not connected yet.
+  for (const tool of tools.data?.tools ?? []) {
+    if (tool.policy === "allow") byServer.set(tool.server, [...(byServer.get(tool.server) ?? []), tool]);
+  }
   return (
     <Page crumb="MCP Hub" title="mcp hub." subtitle="Connectors, tool permissions and operational health.">
       {tools.isError && <ErrorNote error={tools.error} retry={() => void tools.refetch()} />}
@@ -62,15 +66,10 @@ export function McpHub() {
                       <td className="px-6 text-muted">{SERVERS[tool.server]?.name ?? tool.server}</td>
                       <td className={cx("px-6 capitalize", RISK[tool.risk])}>{tool.risk}</td>
                       <td className="px-6">{POLICY[tool.policy] ?? tool.policy}</td>
-                      <td className="px-6 text-muted">{tool.agents.join(", ")}</td>
+                      <td className="px-6 text-muted">{tool.policy === "allow" ? tool.agents.join(", ") : "not connected yet"}</td>
                       <td className="px-6 text-muted">Enabled</td>
                     </tr>
                   ))}
-                  <tr className="border-b border-line">
-                    <td className="px-6 py-4 font-mono text-[13px] text-muted">test_runner.run_test_profile</td>
-                    <td className="px-6 text-muted">Test Runner</td><td className="px-6 text-amber">High</td>
-                    <td className="px-6">Approval · sandbox profile</td><td className="px-6 text-muted">not enabled</td><td className="px-6 text-muted">Enabled</td>
-                  </tr>
                   <tr>
                     <td className="px-6 py-4 font-mono text-[13px] text-muted">arbitrary shell · delete · write</td>
                     <td className="px-6 text-muted">Any</td><td className="px-6 text-red">Critical</td>

@@ -8,7 +8,7 @@ class GeminiClient:
     def __init__(self, model: str, api_key: str):
         self.model_name = model
         self._model = ChatGoogleGenerativeAI(
-            model=model, google_api_key=api_key, temperature=0, max_retries=2
+            model=model, google_api_key=api_key, temperature=0, max_retries=0
         )
 
     async def invoke(

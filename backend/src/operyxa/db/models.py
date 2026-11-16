@@ -66,6 +66,8 @@ class Project(Base):
     name: Mapped[str] = mapped_column(String(200))
     repo_owner: Mapped[str] = mapped_column(String(100))
     repo_name: Mapped[str] = mapped_column(String(100))
+    # Fernet-encrypted read-only token for a private repository. Never returned by the API.
+    github_token_encrypted: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = _created()
     __table_args__ = (Index("idx_projects_owner_created", "owner_id", "created_at"),)
 
@@ -158,6 +160,34 @@ class ToolCall(Base):
     __table_args__ = (
         Index("idx_tool_calls_run_created", "run_id", "created_at"),
         UniqueConstraint("run_id", "evidence_id", name="uq_tool_calls_evidence"),
+    )
+
+
+class Approval(Base):
+    """A human decision request, bound to the exact arguments of one tool call."""
+
+    __tablename__ = "approvals"
+    id: Mapped[uuid.UUID] = _pk()
+    run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"))
+    step_key: Mapped[str] = mapped_column(String(64))
+    agent: Mapped[str] = mapped_column(String(32))
+    tool: Mapped[str] = mapped_column(String(128))
+    args: Mapped[dict[str, Any]] = mapped_column(Json, default=dict)
+    # SHA-256 of (step, tool, arguments): an approval never covers a different call.
+    args_hash: Mapped[str] = mapped_column(String(64))
+    risk: Mapped[str] = mapped_column(String(16))
+    status: Mapped[str] = mapped_column(String(16), default="pending")
+    reason: Mapped[str | None] = mapped_column(Text)
+    decided_by: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    requested_at: Mapped[datetime] = _created()
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (
+        UniqueConstraint("run_id", "args_hash", name="uq_approvals_call"),
+        Index("idx_approvals_status", "status", "requested_at"),
+        CheckConstraint(
+            "status IN ('pending','approved','rejected','expired')", name="approvals_status_check"
+        ),
     )
 
 

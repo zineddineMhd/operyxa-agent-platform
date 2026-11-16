@@ -10,6 +10,7 @@ from typing import Any
 from sqlalchemy import delete, func, select, update
 
 from operyxa.db.models import (
+    Approval,
     AuditEvent,
     Finding,
     LLMUsage,
@@ -119,6 +120,58 @@ class RunStore:
                 )
             ).scalars()
             return {row.evidence_id: row for row in rows}
+
+    # -- approvals --------------------------------------------------------------------
+    async def get_or_create_approval(self, **fields: Any) -> Approval:
+        async with self._db.session.begin() as s:
+            existing = (
+                await s.execute(
+                    select(Approval).where(
+                        Approval.run_id == fields["run_id"],
+                        Approval.args_hash == fields["args_hash"],
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing is not None:
+                return existing
+            approval = Approval(**fields)
+            s.add(approval)
+            # Same transaction: a visible request always comes with a waiting run.
+            await s.execute(
+                update(Run)
+                .where(Run.id == fields["run_id"], Run.status == "running")
+                .values(status="waiting_approval")
+            )
+            return approval
+
+    async def get_approval(self, approval_id: uuid.UUID) -> Approval:
+        async with self._db.session() as s:
+            return (
+                await s.execute(select(Approval).where(Approval.id == approval_id))
+            ).scalar_one()
+
+    async def expire_approval(self, approval_id: uuid.UUID) -> bool:
+        async with self._db.session.begin() as s:
+            result = await s.execute(
+                update(Approval)
+                .where(Approval.id == approval_id, Approval.status == "pending")
+                .values(status="expired", decided_at=utcnow())
+            )
+            return bool(result.rowcount)
+
+    async def sync_waiting_status(self, run_id: uuid.UUID) -> None:
+        """`waiting_approval` while any request is pending, `running` otherwise."""
+        async with self._db.session.begin() as s:
+            pending = await s.scalar(
+                select(func.count(Approval.id)).where(
+                    Approval.run_id == run_id, Approval.status == "pending"
+                )
+            )
+            await s.execute(
+                update(Run)
+                .where(Run.id == run_id, Run.status.in_(("running", "waiting_approval")))
+                .values(status="waiting_approval" if pending else "running")
+            )
 
     # -- usage ------------------------------------------------------------------------
     async def record_usage(self, **fields: Any) -> None:

@@ -19,6 +19,7 @@ from operyxa.agent.budget import Limits, RunBudget
 from operyxa.agent.graph import RunDeps, build_graph
 from operyxa.agent.store import RunStore
 from operyxa.config import Settings
+from operyxa.crypto import SecretBox
 from operyxa.db.models import Project, Run, aware, utcnow
 from operyxa.db.session import Database
 from operyxa.errors import BudgetExceeded, RunCancelled
@@ -96,6 +97,10 @@ async def execute_run(run_id: uuid.UUID, deps: WorkerDeps) -> None:
     budget = RunBudget(run_id, limits, store, started_at, await store.counters(run_id))
     scope = {"owner": project.repo_owner, "repo": project.repo_name, "ref": run.commit_sha or ""}
     try:
+        if project.github_token_encrypted:
+            scope["token"] = SecretBox(deps.settings.secrets_key).decrypt(
+                project.github_token_encrypted
+            )
         if not run.commit_sha:
             # Pin the analysed commit: every later read and every piece of evidence uses it.
             outcome = await deps.gateway.call(
@@ -138,7 +143,9 @@ async def execute_run(run_id: uuid.UUID, deps: WorkerDeps) -> None:
             if resume:
                 await store.emit(run_id, "run.resumed", {"next": list(snapshot.next)})
             remaining = limits.max_seconds - (utcnow() - started_at).total_seconds()
-            async with asyncio.timeout(max(remaining, 0) + 30):
+            # Generous outer bound: budgets are enforced inside; approval waits are not run time.
+            grace = 30 + 4 * deps.settings.approval_ttl_seconds
+            async with asyncio.timeout(max(remaining, 0) + grace):
                 final = await graph.ainvoke(
                     None if resume else {"step_results": {}, "plan_attempts": 0}, config
                 )

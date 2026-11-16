@@ -3,17 +3,24 @@ import uuid
 from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 
-from operyxa.api.deps import CurrentUser, Db, Paging, owned_project
+from operyxa.api.deps import AppSettings, CurrentUser, Db, Paging, owned_project
 from operyxa.api.schemas import Page, ProjectIn, ProjectOut
+from operyxa.crypto import SecretBox
 from operyxa.db.models import Project
 
 router = APIRouter(tags=["projects"])
 
 
 @router.post("/projects", response_model=ProjectOut, status_code=201)
-async def create_project(body: ProjectIn, db: Db, user: CurrentUser) -> Project:
+async def create_project(
+    body: ProjectIn, db: Db, user: CurrentUser, settings: AppSettings
+) -> Project:
     owner, name = body.repo()
     project = Project(owner_id=user.id, name=body.name, repo_owner=owner, repo_name=name)
+    if body.github_token is not None:
+        project.github_token_encrypted = SecretBox(settings.secrets_key).encrypt(
+            body.github_token.get_secret_value()
+        )
     async with db.session.begin() as s:
         s.add(project)
     return project

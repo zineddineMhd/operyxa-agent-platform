@@ -1,5 +1,6 @@
 """Server-side plan validation. Valid JSON is not proof that a plan is safe or feasible."""
 
+import re
 from typing import Any
 
 from pydantic import ValidationError
@@ -11,7 +12,7 @@ def validate_plan(
     raw: Any, *, max_steps: int, allowed_agents: set[str]
 ) -> tuple[dict | None, list[str]]:
     try:
-        plan = ExecutionPlan.model_validate(raw)
+        plan = ExecutionPlan.model_validate(_normalise_ids(raw))
     except ValidationError as exc:
         return None, [f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}" for e in exc.errors()][
             :10
@@ -34,6 +35,31 @@ def validate_plan(
     if not errors and _has_cycle({s.id: list(s.depends_on) for s in plan.steps}):
         errors.append("dependencies must be acyclic")
     return (None, errors) if errors else (plan.model_dump(), [])
+
+
+def _slug(value: Any) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "_", str(value).lower()).strip("_")[:40].strip("_")
+    return slug if slug[:1].isalpha() else f"s_{slug}"[:40]
+
+
+def _normalise_ids(raw: Any) -> Any:
+    """Models write ids like "Analyze-Repo" or 60-character sentences. The id format is our
+    concern, not a reason to reject an otherwise sound plan: rewrite ids, keep the structure."""
+    if not isinstance(raw, dict) or not isinstance(raw.get("steps"), list):
+        return raw
+    steps = []
+    for step in raw["steps"]:
+        if not isinstance(step, dict):
+            return raw
+        deps = step.get("depends_on") or []
+        steps.append(
+            {
+                **step,
+                "id": _slug(step.get("id", "")),
+                "depends_on": [_slug(d) for d in deps] if isinstance(deps, list) else deps,
+            }
+        )
+    return {**raw, "steps": steps}
 
 
 def _has_cycle(deps: dict[str, list[str]]) -> bool:

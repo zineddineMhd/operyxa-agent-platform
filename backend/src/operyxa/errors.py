@@ -39,3 +39,7 @@ class BudgetExceeded(Exception):
 
 class RunCancelled(Exception):
     pass
+
+
+class LLMUnavailable(Exception):
+    """The model provider kept failing after retries (overload, quota, network)."""

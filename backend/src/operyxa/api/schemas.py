@@ -3,7 +3,15 @@ import uuid
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+    SecretStr,
+    computed_field,
+    field_validator,
+)
 
 _REPO_URL = re.compile(
     r"^(?:https://github\.com/)?([A-Za-z0-9_.-]{1,100})/([A-Za-z0-9_.-]{1,100}?)(?:\.git)?/?$"
@@ -40,6 +48,12 @@ class UserOut(Out):
 class ProjectIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     repository_url: str = Field(description="https://github.com/owner/repo or owner/repo")
+    github_token: SecretStr | None = Field(
+        default=None,
+        min_length=20,
+        max_length=400,
+        description="Read-only token for a private repository. Stored encrypted, never returned.",
+    )
 
     @field_validator("repository_url")
     @classmethod
@@ -60,6 +74,12 @@ class ProjectOut(Out):
     repo_owner: str
     repo_name: str
     created_at: datetime
+    github_token_encrypted: str | None = Field(default=None, exclude=True)
+
+    @computed_field
+    @property
+    def has_token(self) -> bool:
+        return self.github_token_encrypted is not None
 
 
 class RunOptions(BaseModel):
@@ -133,6 +153,27 @@ class ToolCallOut(Out):
 
 class ToolCallDetail(ToolCallOut):
     result_text: str | None
+
+
+class ApprovalOut(Out):
+    id: uuid.UUID
+    run_id: uuid.UUID
+    step_key: str
+    agent: str
+    tool: str
+    args: dict[str, Any]
+    args_hash: str
+    risk: str
+    status: str
+    reason: str | None
+    requested_at: datetime
+    expires_at: datetime
+    decided_at: datetime | None
+
+
+class ApprovalDecision(BaseModel):
+    decision: Literal["approve", "reject"]
+    reason: str | None = Field(default=None, max_length=500)
 
 
 class FindingOut(Out):

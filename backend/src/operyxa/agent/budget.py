@@ -33,11 +33,13 @@ class RunBudget:
         self.llm_calls = int(counters.get("llm_calls", 0))
         self.tool_calls = int(counters.get("tool_calls", 0))
         self.cost_usd = float(counters.get("cost_usd", 0.0))
+        self._paused = 0.0  # time spent waiting for a human does not count as run time
 
     async def _common(self) -> None:
         if await self._store.cancel_requested(self.run_id):
             raise RunCancelled()
-        if (utcnow() - self._started_at).total_seconds() > self.limits.max_seconds:
+        elapsed = (utcnow() - self._started_at).total_seconds() - self._paused
+        if elapsed > self.limits.max_seconds:
             raise BudgetExceeded("time")
         if self.cost_usd >= self.limits.max_cost_usd:
             raise BudgetExceeded("cost")
@@ -53,6 +55,9 @@ class RunBudget:
         if self.tool_calls >= self.limits.max_tool_calls:
             raise BudgetExceeded("tool_calls")
         self.tool_calls += 1
+
+    def add_pause(self, seconds: float) -> None:
+        self._paused += seconds
 
     def add_cost(self, usd: float) -> None:
         self.cost_usd += usd

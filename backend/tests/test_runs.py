@@ -264,3 +264,32 @@ async def test_stale_run_is_reclaimed(env):
     await env.store.update_run(run.id, heartbeat_at=utcnow() - timedelta(seconds=120))
     assert await claim_next_run(env.db, "w2", 60) == run.id
     assert (await env.store.get_run(run.id)).locked_by == "w2"
+
+
+async def test_private_repository_uses_the_project_token_without_exposing_it(env, github):
+    from operyxa.crypto import SecretBox
+    from operyxa.db.models import Project
+
+    token = "github_pat_" + "A1b2C3d4E5" * 4
+    github.required_token = token
+    run = await make_run(env)
+    await execute_run(run.id, env)  # no token on the project: the repository is invisible
+    assert (await env.store.get_run(run.id)).stop_reason == "repository_unavailable"
+
+    run = await make_run(env)
+    async with env.db.session.begin() as s:
+        project = await s.get(Project, run.project_id)
+        project.github_token_encrypted = SecretBox(env.settings.secrets_key).encrypt(token)
+        assert token not in project.github_token_encrypted
+    seen = []
+    env.llm = ScriptedLLM(
+        lambda names, messages, choice: (
+            seen.extend([str(m.content) for m in messages] + [str(names)]) or None
+        )
+    )
+    await execute_run(run.id, env)
+    assert (await env.store.get_run(run.id)).status == "completed"
+    stored = [str(c.args) + (c.result_text or "") for c in await rows(env, ToolCall, run.id)]
+    events = [str(e.data) for e in await rows(env, RunEvent, run.id)]
+    assert token not in "".join(seen + stored + events)
+    assert "token" not in "".join(seen)  # the parameter itself is hidden from the model

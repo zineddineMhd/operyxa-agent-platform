@@ -10,9 +10,12 @@ export function Projects() {
   const projects = useQuery({ queryKey: ["projects"], queryFn: api.projects });
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
+  const [token, setToken] = useState("");
+  const config = useQuery({ queryKey: ["config"], queryFn: api.config, staleTime: 60_000 });
   const create = useMutation({
-    mutationFn: () => api.createProject(name.trim() || url.trim().split("/").filter(Boolean).pop()!.replace(/\.git$/, ""), url.trim()),
+    mutationFn: () => api.createProject(name.trim() || url.trim().split("/").filter(Boolean).pop()!.replace(/\.git$/, ""), url.trim(), token.trim() || undefined),
     onSuccess: () => {
+      setToken("");
       setName("");
       setUrl("");
       void client.invalidateQueries({ queryKey: ["projects"] });
@@ -29,7 +32,7 @@ export function Projects() {
           <div className="border-b border-line px-6 py-5"><h2 className="font-medium">Connected repositories</h2></div>
           {projects.isPending && <div className="space-y-3 p-6"><Skeleton className="h-10" /><Skeleton className="h-10" /></div>}
           {projects.isError && <div className="p-6"><ErrorNote error={projects.error} retry={() => void projects.refetch()} /></div>}
-          {projects.data?.items.length === 0 && <Empty title="no repository yet.">Add a public GitHub repository to start a read-only analysis.</Empty>}
+          {projects.data?.items.length === 0 && <Empty title="no repository yet.">Add a GitHub repository, public or private, to start a read-only analysis.</Empty>}
           <ul>
             {projects.data?.items.map((p) => (
               <li key={p.id} className="flex flex-wrap items-center gap-4 border-b border-line px-6 py-4 last:border-b-0">
@@ -37,6 +40,7 @@ export function Projects() {
                   <p className="truncate font-medium">{p.name}</p>
                   <p className="mt-1.5 font-mono text-xs text-muted">{p.repo_owner}/{p.repo_name} · added {dayTime(p.created_at)}</p>
                 </div>
+                {p.has_token && <Tag>Private · token</Tag>}
                 <Tag tone="teal">Read-only</Tag>
               </li>
             ))}
@@ -52,10 +56,18 @@ export function Projects() {
             <Field label="Display name" hint="Optional. Defaults to the repository name.">
               <input className={INPUT} maxLength={200} value={name} onChange={(e) => setName(e.target.value)} />
             </Field>
+            <Field label="Access token — private repositories only"
+              hint={config.data && !config.data.private_repositories
+                ? "Unavailable: SECRETS_KEY is not configured on the server."
+                : "Fine-grained GitHub token with read-only Contents and Metadata. Stored encrypted, never shown again."}>
+              <input className={`${INPUT} font-mono`} type="password" autoComplete="off" minLength={20} maxLength={400}
+                disabled={config.data ? !config.data.private_repositories : false}
+                placeholder="github_pat_…" value={token} onChange={(e) => setToken(e.target.value)} />
+            </Field>
             {create.isError && <ErrorNote error={create.error} />}
             <Button type="submit" disabled={create.isPending} className="w-full py-3">{create.isPending ? "Adding…" : "Add project"}</Button>
             <p className="text-[13px] leading-relaxed text-muted">
-              The repository is read through a GET-only connector. Private repositories need a server-side GitHub token.
+              The repository is read through a GET-only connector. Its code is sent to the configured model provider during a run.
             </p>
           </form>
         </Panel>

@@ -4,7 +4,7 @@ export type RunStatus = "pending" | "running" | "waiting_approval" | "completed"
 export type StepStatus = "pending" | "running" | "completed" | "failed" | "skipped";
 
 export interface User { id: string; email: string; role: string; created_at: string }
-export interface Project { id: string; name: string; repo_owner: string; repo_name: string; created_at: string }
+export interface Project { id: string; name: string; repo_owner: string; repo_name: string; created_at: string; has_token: boolean }
 export interface Limits { max_llm_calls: number; max_tool_calls: number; max_seconds: number; max_cost_usd: number }
 export interface PlanStep { id: string; agent: string; action: string; depends_on: string[] }
 export interface Run {
@@ -44,6 +44,11 @@ export interface Report {
     steps: { id: string; agent: string; action: string; status: string; summary: string | null; error: string | null }[];
   };
 }
+export interface Approval {
+  id: string; run_id: string; step_key: string; agent: string; tool: string; args: Record<string, unknown>;
+  args_hash: string; risk: string; status: "pending" | "approved" | "rejected" | "expired"; reason: string | null;
+  requested_at: string; expires_at: string; decided_at: string | null;
+}
 export interface RunEvent { id: number; type: string; data: Record<string, unknown>; created_at: string }
 export interface Page<T> { items: T[]; total: number; limit: number; offset: number }
 export interface Overview {
@@ -51,7 +56,10 @@ export interface Overview {
   success_rate: number | null; pending_approvals: number; estimated_cost_usd: number;
   avg_run_cost_usd: number | null; llm_calls: number; llm_provider: string;
 }
-export interface PlatformConfig { llm_provider: string; llm_model: string; read_only: boolean; limits: Limits }
+export interface PlatformConfig {
+  llm_provider: string; llm_model: string; llm_fallback_model: string | null;
+  private_repositories: boolean; read_only: boolean; limits: Limits;
+}
 export interface CatalogTool { server: string; tool: string; risk: string; policy: string; agents: string[]; access: string }
 
 export class ApiError extends Error {
@@ -107,7 +115,8 @@ export const api = {
     post<{ access_token: string }>("/auth/login", { email, password }),
   me: () => request<User>("/users/me"),
   projects: () => request<Page<Project>>("/projects?limit=100"),
-  createProject: (name: string, repository_url: string) => post<Project>("/projects", { name, repository_url }),
+  createProject: (name: string, repository_url: string, github_token?: string) =>
+    post<Project>("/projects", { name, repository_url, ...(github_token ? { github_token } : {}) }),
   runs: (params: { limit?: number; offset?: number; status?: string } = {}) => {
     const query = new URLSearchParams();
     for (const [key, value] of Object.entries(params)) if (value !== undefined && value !== "") query.set(key, String(value));
@@ -123,6 +132,9 @@ export const api = {
   evidence: (id: string, evidenceId: string) => request<ToolCallDetail>(`/runs/${id}/evidence/${evidenceId}`),
   eventHistory: (id: string) => request<RunEvent[]>(`/runs/${id}/events/history?limit=500`),
   report: (id: string) => request<Report>(`/runs/${id}/report`),
+  approvals: (status: string) => request<Approval[]>(`/approvals?status=${status}`),
+  decideApproval: (id: string, decision: "approve" | "reject") =>
+    post<Approval>(`/approvals/${id}/decision`, { decision }),
   overview: () => request<Overview>("/analytics/overview"),
   config: () => request<PlatformConfig>("/platform/config"),
   tools: () => request<{ tools: CatalogTool[] }>("/mcp/tools"),

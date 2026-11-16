@@ -28,7 +28,7 @@ from operyxa.agent.schemas import ExecutionPlan, ReportDraft, schema_tool
 from operyxa.agent.store import RunStore
 from operyxa.config import Settings
 from operyxa.db.models import utcnow
-from operyxa.errors import BudgetExceeded, RunCancelled
+from operyxa.errors import BudgetExceeded, LLMUnavailable, RunCancelled
 from operyxa.gateway.gateway import CallContext, ToolGateway
 from operyxa.llm.base import MeteredLLM
 
@@ -67,8 +67,15 @@ class RunDeps:
     budget: RunBudget
 
 
+STOPPING = (BudgetExceeded, RunCancelled, LLMUnavailable)
+
+
 def _stop_reason(exc: Exception) -> str:
-    return "cancelled" if isinstance(exc, RunCancelled) else f"budget_exceeded:{exc.kind}"
+    if isinstance(exc, RunCancelled):
+        return "cancelled"
+    if isinstance(exc, LLMUnavailable):
+        return "llm_unavailable"
+    return f"budget_exceeded:{exc.kind}"
 
 
 def build_graph(deps: RunDeps, checkpointer: Any):
@@ -92,7 +99,7 @@ def build_graph(deps: RunDeps, checkpointer: Any):
                 "submit_plan",
                 step_key="planner",
             )
-        except (BudgetExceeded, RunCancelled) as exc:
+        except STOPPING as exc:
             return {"stop_reason": _stop_reason(exc), "plan_attempts": attempts}
         raw = ai.tool_calls[0]["args"] if ai.tool_calls else {}
         plan, errors = validate_plan(
@@ -189,7 +196,7 @@ def build_graph(deps: RunDeps, checkpointer: Any):
                 ctx=ctx,
                 max_turns=settings.max_turns_per_step,
             )
-        except (BudgetExceeded, RunCancelled) as exc:
+        except STOPPING as exc:
             error, update["stop_reason"] = str(exc) or "cancelled", _stop_reason(exc)
         except (ValidationError, RuntimeError) as exc:
             error = f"{type(exc).__name__}: {str(exc)[:300]}"

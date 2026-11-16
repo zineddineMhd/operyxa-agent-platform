@@ -19,6 +19,7 @@ export function Settings() {
             <dl className="mt-3">
               <KeyValue label="Provider">{c.llm_provider}</KeyValue>
               <KeyValue label="Model">{c.llm_model}</KeyValue>
+              <KeyValue label="Fallback model">{c.llm_fallback_model ?? "none"}</KeyValue>
               <KeyValue label="Agent access">read-only</KeyValue>
             </dl>
           )}

@@ -60,8 +60,16 @@ cd web && npm install && npm run dev
 
 Interface : http://localhost:5173 (les appels `/api` sont relayés vers le port 8000).
 Documentation interactive de l'API : http://localhost:8000/docs.
-Avec `LLM_PROVIDER=demo` (défaut) tout fonctionne sans clé ni coût ; passer à
-`LLM_PROVIDER=gemini` + `GEMINI_API_KEY` pour le vrai modèle.
+## Modèles
+
+| `LLM_PROVIDER` | Variables | Remarque |
+|---|---|---|
+| `demo` (défaut) | — | Modèle déterministe hors-ligne, sans clé ni coût |
+| `gemini` | `GEMINI_API_KEY`, `GEMINI_MODEL`, `GEMINI_FALLBACK_MODEL` | Palier gratuit : 20 requêtes/jour sur `gemini-3.8-flash`, soit environ un run. Régler `LLM_REQUESTS_PER_MINUTE=5` |
+| `openai_compatible` | `LLM_API_KEY`, `LLM_MODEL`, `LLM_BASE_URL` | NVIDIA NIM par défaut ; tout service compatible OpenAI avec appel d'outils. Non encore testé avec une vraie clé |
+
+Dépôts privés : définir `SECRETS_KEY` sur le serveur, puis saisir un jeton GitHub en lecture
+seule (Contents + Metadata) à la création du projet. Il est chiffré au repos et jamais renvoyé.
 
 Avec Docker : `docker compose -f infrastructure/compose.yml up --build`.
 
@@ -72,8 +80,8 @@ cd backend && uv run pytest
 ```
 
 SQLite par défaut ; définir `TEST_DATABASE_URL` pour PostgreSQL. Les cas T-01 à T-10 du cahier des
-charges sont couverts, sauf T-07 (approbations, V1) et la partie « test échouant » de T-06
-(exécution de tests en sandbox, V1).
+charges sont couverts, sauf la partie « test échouant » de T-06 (exécution de tests en sandbox,
+pas encore développée).
 
 ## Interface web
 
@@ -83,5 +91,5 @@ Runs & Traces, MCP Hub, Approvals, Reports (constats avec preuve ouvrable en un 
 palette de commandes `Ctrl K`.
 
 Toutes les données affichées viennent de l'API. Ce que le backend ne fait pas encore est indiqué
-comme tel : file d'approbations vide, Test Runner « not enabled », bouton « Cancel run » à la place
-de « Pause run ».
+comme tel : Test Runner « not enabled » (l'Approval Center est fonctionnel mais aucun outil à
+risque élevé n'est encore branché), bouton « Cancel run » à la place de « Pause run ».

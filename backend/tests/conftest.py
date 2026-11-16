@@ -43,12 +43,18 @@ class FakeGitHub:
         self.files = dict(files or REPO_FILES)
         self.down = False
         self.requests: list[str] = []
+        self.required_token: str | None = None  # set to simulate a private repository
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
         self.requests.append(path)
         if self.down:
             return httpx.Response(503)
+        if (
+            self.required_token
+            and request.headers.get("authorization") != f"Bearer {self.required_token}"
+        ):
+            return httpx.Response(404)  # GitHub hides private repositories behind a 404
         if not path.startswith("/repos/acme/demo"):
             return httpx.Response(404)
         rest = path.removeprefix("/repos/acme/demo")
@@ -131,6 +137,7 @@ def settings() -> Settings:
         tool_max_retries=1,
         breaker_failure_threshold=2,
         llm_provider="demo",
+        secrets_key="test-secrets-key",
     )
 
 

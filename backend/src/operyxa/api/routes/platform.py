@@ -4,8 +4,9 @@ from fastapi import APIRouter
 from sqlalchemy import func, select
 
 from operyxa.api.deps import AppSettings, CurrentUser, Db
-from operyxa.db.models import LLMUsage, Project, Run, utcnow
+from operyxa.db.models import Approval, LLMUsage, Project, Run, utcnow
 from operyxa.gateway.catalog import describe_catalog
+from operyxa.llm.factory import model_names
 
 router = APIRouter(tags=["platform"])
 
@@ -45,6 +46,11 @@ async def overview(db: Db, user: CurrentUser, settings: AppSettings) -> dict:
                 Run.id.in_(mine), Run.created_at >= utcnow() - timedelta(days=7)
             )
         )
+        pending = await s.scalar(
+            select(func.count(Approval.id)).where(
+                Approval.run_id.in_(mine), Approval.status == "pending"
+            )
+        )
     total = sum(by_status.values())
     finished = by_status.get("completed", 0) + by_status.get("failed", 0)
     return {
@@ -52,7 +58,7 @@ async def overview(db: Db, user: CurrentUser, settings: AppSettings) -> dict:
         "runs_this_week": int(this_week or 0),
         "runs_by_status": by_status,
         "success_rate": by_status.get("completed", 0) / finished if finished else None,
-        "pending_approvals": by_status.get("waiting_approval", 0),
+        "pending_approvals": int(pending or 0),
         "estimated_cost_usd": float(cost),
         "avg_run_cost_usd": float(cost) / total if total else None,
         "llm_calls": int(calls),
@@ -63,10 +69,12 @@ async def overview(db: Db, user: CurrentUser, settings: AppSettings) -> dict:
 @router.get("/platform/config")
 async def platform_config(user: CurrentUser, settings: AppSettings) -> dict:
     """Non-secret runtime configuration the UI displays (model, default run limits)."""
-    demo = settings.llm_provider == "demo"
+    models = model_names(settings)
     return {
         "llm_provider": settings.llm_provider,
-        "llm_model": "demo-deterministic" if demo else settings.gemini_model,
+        "llm_model": models[0] if models else "not configured",
+        "llm_fallback_model": models[1] if len(models) > 1 else None,
+        "private_repositories": bool(settings.secrets_key),
         "read_only": True,
         "limits": {
             "max_llm_calls": settings.max_agent_steps,

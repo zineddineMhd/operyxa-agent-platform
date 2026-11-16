@@ -9,17 +9,18 @@ from operyxa.mcp_servers.github_client import GitHubClient, GitHubError
 MAX_FILES_PER_SCAN = 12
 
 
-def build_analysis_server(client: GitHubClient) -> MCPServer:
+def build_analysis_server(base: GitHubClient) -> MCPServer:
     server = MCPServer("operyxa-analysis")
 
-    async def tree_paths(owner: str, repo: str, ref: str) -> set[str]:
+    async def tree_paths(client: GitHubClient, owner: str, repo: str, ref: str) -> set[str]:
         return {e["path"] for e in await client.get_tree(owner, repo, ref) if e["type"] == "file"}
 
     @server.tool()
-    async def scan_dependencies(owner: str, repo: str, ref: str) -> dict:
+    async def scan_dependencies(owner: str, repo: str, ref: str, token: str = "") -> dict:
         """Parse dependency manifests; report unpinned or unsafe specs and missing lockfiles."""
+        client = base.with_token(token)
         try:
-            paths = await tree_paths(owner, repo, ref)
+            paths = await tree_paths(client, owner, repo, ref)
             manifests = sorted(p for p in paths if rules.is_manifest(p))[:MAX_FILES_PER_SCAN]
             result, issues = [], []
             for path in manifests:
@@ -36,10 +37,11 @@ def build_analysis_server(client: GitHubClient) -> MCPServer:
             raise ToolError(str(exc)) from exc
 
     @server.tool()
-    async def check_config(owner: str, repo: str, ref: str) -> dict:
+    async def check_config(owner: str, repo: str, ref: str, token: str = "") -> dict:
         """Check repository hygiene: CI, tests, committed secrets files, Dockerfiles, workflows."""
+        client = base.with_token(token)
         try:
-            paths = await tree_paths(owner, repo, ref)
+            paths = await tree_paths(client, owner, repo, ref)
             issues = rules.tree_issues(paths)
             dockerfiles = [
                 p for p in sorted(paths) if p.rsplit("/", 1)[-1].startswith("Dockerfile")

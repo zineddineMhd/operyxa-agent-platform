@@ -12,7 +12,10 @@ Category = Literal[
 
 
 class PlanStep(BaseModel):
-    id: str = Field(pattern=r"^[a-z][a-z0-9_]{0,39}$")
+    id: str = Field(
+        pattern=r"^[a-z][a-z0-9_]{0,39}$",
+        description="short snake_case identifier, at most 40 characters, e.g. repo_overview",
+    )
     agent: AgentName
     action: str = Field(min_length=5, max_length=600)
     depends_on: list[str] = []
@@ -54,7 +57,12 @@ def _inline(node: Any, defs: dict[str, Any]) -> Any:
     if isinstance(node, dict):
         if "$ref" in node:
             return _inline(defs[node["$ref"].rsplit("/", 1)[-1]], defs)
-        return {k: _inline(v, defs) for k, v in node.items() if k not in ("title", "$defs")}
+        # Drop JSON-schema metadata only: a *property* may legitimately be named "title".
+        return {
+            k: _inline(v, defs)
+            for k, v in node.items()
+            if k != "$defs" and not (k == "title" and isinstance(v, str))
+        }
     if isinstance(node, list):
         return [_inline(v, defs) for v in node]
     return node

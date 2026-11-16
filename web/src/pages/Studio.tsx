@@ -17,6 +17,7 @@ const STOP_REASONS: Record<string, string> = {
   "budget_exceeded:llm_calls": "The agent-step budget was reached.",
   "budget_exceeded:time": "The run-time budget was reached.",
   "budget_exceeded:cost": "The cost budget was reached.",
+  llm_unavailable: "The model provider stayed unavailable after several retries.",
   plan_invalid: "The planner could not produce a valid plan.",
   step_failed: "At least one step did not complete.",
   repository_unavailable: "The repository could not be read.",
@@ -41,6 +42,11 @@ function describe(event: RunEvent): { text: string; detail: string } | null {
     case "tool.completed": return { text: `${d.tool} returned`, detail: `tool.completed · ${d.evidence_id} · ${d.duration_ms} ms` };
     case "tool.failed": return { text: `${d.tool} failed`, detail: `tool.failed · ${d.error_code}` };
     case "tool.rejected": return { text: `${d.tool} rejected by policy`, detail: `tool.rejected · ${d.code}` };
+    case "approval.required": return { text: `Approval required for ${d.tool}`, detail: `approval.required · ${d.risk} risk` };
+    case "approval.decided": return { text: `A reviewer chose to ${d.decision === "approved" ? "approve" : "reject"}`, detail: "approval.decided" };
+    case "approval.approved": return { text: `${d.tool} approved`, detail: "approval.approved" };
+    case "approval.rejected": return { text: `${d.tool} rejected by the reviewer`, detail: "approval.rejected" };
+    case "approval.expired": return { text: `Approval for ${d.tool} expired`, detail: "approval.expired" };
     case "findings.verified": return { text: "Evidence verified", detail: `${d.verified} verified · ${d.unverified} unverified` };
     case "report.ready": return { text: d.partial ? "Partial report saved" : "Report saved", detail: `${d.verified_findings} verified findings` };
     case "run.completed": return { text: "Run completed", detail: "run.completed" };
@@ -193,6 +199,7 @@ function RunStudio({ runId }: { runId: string }) {
   const note = r.stop_reason ? `${STOP_REASONS[r.stop_reason] ?? r.stop_reason}${hasReport ? " A partial report is available." : ""}`
     : r.status === "completed" ? "All steps completed and every finding was checked against its evidence."
     : r.status === "pending" ? "Waiting for a worker to pick up the run."
+    : r.status === "waiting_approval" ? "A step needs a decision before the run can continue."
     : "Agents can only read. Every tool call goes through the gateway.";
 
   return (
@@ -213,7 +220,10 @@ function RunStudio({ runId }: { runId: string }) {
               <p className="font-mono text-xs text-muted">{nodes.length} tasks · {branches} {branches > 1 ? "parallel branches" : "branch"} · read-only</p>
             </div>
             <PlanGraph nodes={nodes} selected={node.id} onSelect={setSelected} />
-            <p className={cx("border-t border-line px-6 py-4 text-sm", r.stop_reason && r.stop_reason !== "cancelled" ? "text-amber" : "text-muted")}>{note}</p>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line px-6 py-4">
+              <p className={cx("text-sm", r.stop_reason && r.stop_reason !== "cancelled" ? "text-amber" : "text-muted")}>{note}</p>
+              {r.status === "waiting_approval" && <TextLink to="/app/approvals">Review approval →</TextLink>}
+            </div>
           </Panel>
           <Panel>
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-6 py-4">

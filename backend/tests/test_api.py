@@ -158,4 +158,27 @@ async def test_run_results_and_sse_replay(client, env):
     overview = (await client.get("/api/v1/analytics/overview", headers=headers)).json()
     assert overview["runs_total"] == 1 and overview["success_rate"] == 1.0
     tools = (await client.get("/api/v1/mcp/tools", headers=headers)).json()["tools"]
-    assert all(t["access"] == "read-only" for t in tools) and len(tools) == 7
+    assert len(tools) == 8
+    assert {t["tool"] for t in tools if t["access"] != "read-only"} == {
+        "test_runner.run_test_profile"
+    }
+
+
+async def test_project_token_is_write_only(client, db):
+    from sqlalchemy import select
+
+    from operyxa.db.models import Project
+
+    headers = await signup(client, "a@example.com")
+    token = "github_pat_" + "x" * 40
+    created = await client.post(
+        "/api/v1/projects",
+        headers=headers,
+        json={"name": "private", "repository_url": "acme/private", "github_token": token},
+    )
+    assert created.status_code == 201 and created.json()["has_token"] is True
+    listing = await client.get("/api/v1/projects", headers=headers)
+    assert token not in created.text + listing.text and "encrypted" not in listing.text
+    async with db.session() as s:
+        stored = (await s.execute(select(Project.github_token_encrypted))).scalar_one()
+    assert stored and token not in stored

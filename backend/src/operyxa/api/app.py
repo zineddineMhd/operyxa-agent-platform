@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
-from operyxa.api.routes import auth, platform, projects, runs
+from operyxa.api.routes import approvals, auth, platform, projects, runs
 from operyxa.config import Settings, get_settings
 from operyxa.db.session import Database
 from operyxa.errors import AppError
@@ -70,6 +70,12 @@ def create_app(settings: Settings | None = None, db: Database | None = None) -> 
             await s.execute(text("SELECT 1"))
         return {"status": "ok"}
 
-    for router in (auth.router, projects.router, runs.router, platform.router):
+    for router in (
+        auth.router,
+        projects.router,
+        runs.router,
+        approvals.router,
+        platform.router,
+    ):
         app.include_router(router, prefix="/api/v1")
     return app

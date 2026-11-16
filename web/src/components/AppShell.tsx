@@ -32,11 +32,13 @@ const NAV = [
 function usePlatform() {
   const config = useQuery({ queryKey: ["config"], queryFn: api.config, staleTime: 60_000 });
   const tools = useQuery({ queryKey: ["tools"], queryFn: api.tools, staleTime: 60_000 });
-  return { config: config.data, servers: new Set(tools.data?.tools.map((t) => t.server)).size, failed: config.isError };
+  return { config: config.data, servers: new Set(tools.data?.tools.filter((t) => t.policy === "allow").map((t) => t.server)).size, failed: config.isError };
 }
 
 function Sidebar() {
   const { config, servers, failed } = usePlatform();
+  const pending = useQuery({ queryKey: ["approvals", "pending"], queryFn: () => api.approvals("pending"), refetchInterval: 5000 });
+  const waiting = pending.data?.length ?? 0;
   const { user, signOut } = useAuth();
   return (
     <aside className="flex shrink-0 flex-col border-line bg-panel max-lg:border-b lg:sticky lg:top-0 lg:h-dvh lg:w-[242px] lg:border-r">
@@ -56,7 +58,10 @@ function Sidebar() {
                   {String(index + 1).padStart(2, "0")}
                 </span>
                 <span className="flex-1">{item.label}</span>
-                {isActive && <span aria-hidden className="size-[6px] bg-violet-soft max-lg:hidden" />}
+                {item.label === "Approvals" && waiting > 0 && (
+                  <span className="rounded-[3px] border border-amber/60 px-1.5 py-0.5 font-mono text-[11px] text-amber">{waiting} pending</span>
+                )}
+                {isActive && !(item.label === "Approvals" && waiting > 0) && <span aria-hidden className="size-[6px] bg-violet-soft max-lg:hidden" />}
               </>
             )}
           </NavLink>

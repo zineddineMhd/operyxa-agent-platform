@@ -13,6 +13,7 @@ import secrets
 import time
 import uuid
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any
 
 import jsonschema
@@ -20,6 +21,8 @@ import jsonschema
 from operyxa.agent.budget import RunBudget
 from operyxa.agent.store import RunStore
 from operyxa.config import Settings
+from operyxa.db.models import aware, utcnow
+from operyxa.errors import RunCancelled
 from operyxa.gateway.breaker import CircuitBreaker
 from operyxa.gateway.catalog import CATALOG, SCOPE_PARAMS, ToolDef, decide, is_sensitive_path
 from operyxa.gateway.providers import ToolProvider
@@ -34,7 +37,9 @@ class CallContext:
     run_id: uuid.UUID
     step_key: str
     agent: str
-    scope: dict[str, str]  # owner, repo, ref — fixed by the run, never by the model
+    # owner, repo, ref and the project's GitHub token: fixed by the run, never by the model,
+    # and never written to events, logs or the tool-call table.
+    scope: dict[str, str]
     budget: RunBudget | None = None
     actor_id: uuid.UUID | None = None
 
@@ -111,8 +116,9 @@ class ToolGateway:
         self._tools = tools
 
     def tools_for(self, agent: str) -> list[ToolDef]:
+        """Tools an agent may ask for. High-risk ones are offered, then gated by an approval."""
         return [
-            t for t in self._tools.values() if agent in t.agents and decide(t, agent)[0] == "allow"
+            t for t in self._tools.values() if agent in t.agents and decide(t, agent)[0] != "deny"
         ]
 
     def resolve_model_name(self, model_name: str) -> str:
@@ -135,8 +141,6 @@ class ToolGateway:
             return await self._reject(
                 ctx, tool_name, args, tool.risk, "TOOL_PERMISSION_DENIED", reason
             )
-        if decision == "approval_required":
-            return await self._reject(ctx, tool_name, args, tool.risk, "APPROVAL_REQUIRED", reason)
         try:
             jsonschema.validate(args, tool.input_schema)
         except jsonschema.ValidationError as exc:
@@ -161,6 +165,14 @@ class ToolGateway:
         if cached is not None:  # resume after a crash, or a repeated identical read
             return ToolOutcome(True, tool_name, cached.evidence_id, cached.result_text or "")
 
+        if decision == "approval_required":
+            verdict = await self._await_approval(ctx, tool, args, key)
+            if verdict != "approved":
+                code = "APPROVAL_EXPIRED" if verdict == "expired" else "APPROVAL_REJECTED"
+                return await self._reject(
+                    ctx, tool_name, args, tool.risk, code, f"the approval request was {verdict}"
+                )
+
         if ctx.budget is not None:
             await ctx.budget.reserve_tool_call()
         await self._store.emit(
@@ -176,7 +188,7 @@ class ToolGateway:
             },
         )
 
-        full_args = {**args, **{p: ctx.scope[p] for p in tool.scope_params}}
+        full_args = {**args, **{p: ctx.scope.get(p, "") for p in tool.scope_params}}
         started = time.monotonic()
         ok, text, code, attempts = await self._execute(tool, full_args)
         duration_ms = int((time.monotonic() - started) * 1000)
@@ -221,6 +233,64 @@ class ToolGateway:
             },
         )
         return ToolOutcome(ok, tool_name, evidence_id if ok else None, text, code)
+
+    async def _await_approval(
+        self, ctx: CallContext, tool: ToolDef, args: dict[str, Any], args_hash: str
+    ) -> str:
+        """Suspend this call until a person decides, the request expires, or the run is cancelled.
+
+        The request is keyed by the hash of the exact call, so an approval can never be replayed
+        for other arguments, and a restarted worker finds the same request again.
+        """
+        ttl = self._settings.approval_ttl_seconds
+        approval = await self._store.get_or_create_approval(
+            run_id=ctx.run_id,
+            step_key=ctx.step_key,
+            agent=ctx.agent,
+            tool=tool.name,
+            args=args,
+            args_hash=args_hash,
+            risk=tool.risk,
+            expires_at=utcnow() + timedelta(seconds=ttl),
+        )
+        if approval.status == "pending":
+            await self._store.sync_waiting_status(ctx.run_id)
+            await self._store.emit(
+                ctx.run_id,
+                "approval.required",
+                {
+                    "approval_id": str(approval.id),
+                    "tool": tool.name,
+                    "agent": ctx.agent,
+                    "step": ctx.step_key,
+                    "risk": tool.risk,
+                    "expires_at": aware(approval.expires_at).isoformat(),
+                },
+            )
+        waited_from = time.monotonic()
+        try:
+            while approval.status == "pending":
+                if utcnow() >= aware(approval.expires_at):
+                    await self._store.expire_approval(approval.id)
+                elif await self._store.cancel_requested(ctx.run_id):
+                    await self._store.expire_approval(approval.id)
+                    raise RunCancelled()
+                else:
+                    await asyncio.sleep(self._settings.approval_poll_seconds)
+                approval = await self._store.get_approval(approval.id)
+        finally:
+            if ctx.budget is not None:
+                ctx.budget.add_pause(time.monotonic() - waited_from)
+            await self._store.sync_waiting_status(ctx.run_id)
+        # Defence in depth: the stored request must describe exactly this call.
+        if approval.status == "approved" and approval.args_hash != args_hash:
+            return "rejected"
+        await self._store.emit(
+            ctx.run_id,
+            f"approval.{approval.status}",
+            {"approval_id": str(approval.id), "tool": tool.name, "step": ctx.step_key},
+        )
+        return approval.status
 
     async def _execute(
         self, tool: ToolDef, args: dict[str, Any]

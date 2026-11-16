@@ -16,12 +16,27 @@ class Settings(BaseSettings):
 
     jwt_secret_key: str = "change-me"
     jwt_ttl_minutes: int = 60
+    # Encrypts per-project GitHub tokens at rest. Required to connect private repositories.
+    secrets_key: str = ""
     cors_origins: list[str] = ["http://localhost:5173"]
 
     # LLM. "demo" is a deterministic offline model: no key, no network, no cost.
-    llm_provider: Literal["gemini", "demo"] = "demo"
+    # "openai_compatible" covers NVIDIA NIM (the default base URL) and any OpenAI-style API.
+    llm_provider: Literal["gemini", "openai_compatible", "demo"] = "demo"
+    llm_base_url: str = "https://integrate.api.nvidia.com/v1"
+    llm_api_key: str = ""
+    llm_model: str = ""
+    llm_fallback_model: str = ""
     gemini_api_key: str = ""
     gemini_model: str = "gemini-3.8-flash"
+    # Tried when the main model stays unavailable after retries (overload, quota).
+    gemini_fallback_model: str = ""
+    llm_max_retries: int = 3
+    llm_timeout_seconds: float = 90.0
+    # Client-side throttle per model. The Gemini free tier allows 5 requests per minute.
+    # 0 disables it (paid tiers).
+    llm_requests_per_minute: int = 0
+    llm_retry_base_seconds: float = 2.0
     # USD per 1M tokens, e.g. {"gemini-3.8-flash": {"input": 0.3, "output": 2.5}}.
     # Prices move: they are configuration, never constants in code.
     llm_pricing: dict[str, dict[str, float]] = Field(default_factory=dict)
@@ -41,6 +56,10 @@ class Settings(BaseSettings):
     tool_output_max_chars: int = 40_000
     breaker_failure_threshold: int = 4
     breaker_reset_seconds: float = 30.0
+
+    # Human approvals for high-risk tools
+    approval_ttl_seconds: int = 600
+    approval_poll_seconds: float = 1.0
 
     # MCP servers. Empty URL = run the server in-process (default for local/CI).
     mcp_github_url: str = ""
