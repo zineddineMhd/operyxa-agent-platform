@@ -296,8 +296,11 @@ class ToolGateway:
         self, tool: ToolDef, args: dict[str, Any]
     ) -> tuple[bool, str, str | None, int]:
         provider, breaker = self._providers[tool.server], self._breakers[tool.server]
+        timeout = getattr(provider, "timeout_seconds", None) or self._settings.tool_timeout_seconds
+        retries = getattr(provider, "max_retries", None)
+        retries = self._settings.tool_max_retries if retries is None else retries
         attempts, code, message = 0, None, ""
-        for attempt in range(self._settings.tool_max_retries + 1):
+        for attempt in range(retries + 1):
             if not breaker.allow():
                 return (
                     False,
@@ -307,7 +310,7 @@ class ToolGateway:
                 )
             attempts += 1
             try:
-                async with asyncio.timeout(self._settings.tool_timeout_seconds):
+                async with asyncio.timeout(timeout):
                     result = await provider.call(tool.remote_name, args)
                 if not result.is_error:
                     breaker.success()
@@ -323,7 +326,7 @@ class ToolGateway:
                 breaker.success()  # the connector answered; this is a domain error
                 return False, message, code, attempts
             breaker.failure()
-            if attempt < self._settings.tool_max_retries:
+            if attempt < retries:
                 await asyncio.sleep(min(0.5 * 2**attempt, 4.0))
         return False, message, code, attempts
 

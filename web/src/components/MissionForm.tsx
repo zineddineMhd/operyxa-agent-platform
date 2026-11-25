@@ -13,10 +13,12 @@ export function MissionForm() {
   const config = useQuery({ queryKey: ["config"], queryFn: api.config, staleTime: 60_000 });
   const [projectId, setProjectId] = useState("");
   const [objective, setObjective] = useState("");
+  const [runTests, setRunTests] = useState(false);
+  const testRunner = config.data?.test_runner;
   const selected = projectId || projects.data?.items[0]?.id || "";
 
   const start = useMutation({
-    mutationFn: () => api.startRun(selected, objective.trim()),
+    mutationFn: () => api.startRun(selected, objective.trim(), runTests && !!testRunner?.enabled),
     onSuccess: (run) => {
       void client.invalidateQueries({ queryKey: ["runs"] });
       void client.invalidateQueries({ queryKey: ["overview"] });
@@ -50,8 +52,21 @@ export function MissionForm() {
             <textarea className={`${INPUT} min-h-[132px] resize-y font-mono leading-relaxed`} required minLength={10}
               maxLength={4000} placeholder={EXAMPLE} value={objective} onChange={(e) => setObjective(e.target.value)} />
           </Field>
+          {testRunner?.enabled && (
+            <label className="flex cursor-pointer items-start gap-3 rounded-[5px] border border-line p-3.5 text-sm">
+              <input type="checkbox" className="mt-0.5 accent-current" checked={runTests} onChange={(e) => setRunTests(e.target.checked)} />
+              <span>
+                <span className="font-medium">Run the test suite</span>
+                <span className="mt-1 block text-[13px] leading-relaxed text-muted">
+                  In a throw-away sandbox without network or secrets, limited to {Math.round(testRunner.timeout_seconds / 60)} min.
+                  The run pauses until you approve it in the Approval Center.
+                </span>
+              </span>
+            </label>
+          )}
           <div className="flex flex-wrap gap-2">
             <Tag tone="teal">Read-only</Tag>
+            {runTests && testRunner?.enabled && <Tag tone="amber">Tests · approval</Tag>}
             {config.data && <Tag>{config.data.llm_model.replace(/-/g, " ")}</Tag>}
           </div>
           {start.isError && <ErrorNote error={start.error} />}

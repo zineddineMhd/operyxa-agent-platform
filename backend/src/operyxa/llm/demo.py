@@ -57,7 +57,8 @@ class DemoLLM:
                 _call(
                     "submit_plan",
                     {
-                        "steps": [
+                        "steps": self._testing_step(messages)
+                        + [
                             {
                                 "id": "repo_overview",
                                 "agent": "repository",
@@ -84,9 +85,13 @@ class DemoLLM:
                 if (m := _RESULT.search(str(msg.content)))
             ]
             seen_tool_output = any(isinstance(m, ToolMessage) for m in messages)
-            if not seen_tool_output and tool_choice != "submit_step_result":
+            if "test_runner__run_test_profile" in names and tool_choice != "submit_step_result":
+                calls = self._test(results, seen_tool_output, messages)
+            elif not seen_tool_output and tool_choice != "submit_step_result":
                 calls = self._explore(names)
             else:
+                calls = []
+            if not calls:
                 calls = [_call("submit_step_result", self._step_result(results))]
         usage = {
             "input_tokens": sum(len(str(m.content)) for m in messages) // 4,
@@ -94,6 +99,45 @@ class DemoLLM:
         }
         usage["total_tokens"] = usage["input_tokens"] + usage["output_tokens"]
         return AIMessage(content="", tool_calls=calls, usage_metadata=usage)
+
+    @staticmethod
+    def _testing_step(messages: list[BaseMessage]) -> list[dict[str, Any]]:
+        try:
+            request = json.loads(str(messages[-1].content))
+        except ValueError:
+            return []
+        if "testing" not in request.get("available_agents", []):
+            return []
+        return [
+            {
+                "id": "test_suite",
+                "agent": "testing",
+                "depends_on": [],
+                "action": "Run the repository's test suite with the applicable test profile.",
+            }
+        ]
+
+    @staticmethod
+    def _test(
+        results: list[tuple[str, str, str]], seen_tool_output: bool, messages: list[BaseMessage]
+    ) -> list[dict[str, Any]]:
+        """list the profiles, run the first applicable one, then conclude."""
+        if not seen_tool_output:
+            return [_call("test_runner__list_test_profiles", {})]
+        tools = {tool for _, tool, _ in results}
+        failed = any(
+            "<tool_error" in str(m.content) for m in messages if isinstance(m, ToolMessage)
+        )
+        if tools != {"test_runner.list_test_profiles"} or failed:
+            return []
+        body = next(b for _, t, b in results if t == "test_runner.list_test_profiles")
+        try:
+            profiles = [p["name"] for p in json.loads(body)["profiles"] if p["applicable"]]
+        except (ValueError, KeyError, TypeError):
+            return []
+        return (
+            [_call("test_runner__run_test_profile", {"profile": profiles[0]})] if profiles else []
+        )
 
     @staticmethod
     def _explore(names: set[str]) -> list[dict[str, Any]]:
@@ -118,6 +162,22 @@ class DemoLLM:
                 notes.append(f"{data.get('total', 0)} entries in the tree")
             if tool == "github.list_commits" and data.get("commits"):
                 notes.append(f"{len(data['commits'])} recent commits reviewed")
+            if tool == "test_runner.run_test_profile":
+                counts = ", ".join(f"{n} {k}" for k, n in data.get("counts", {}).items())
+                notes.append(f"profile {data.get('profile')}: {data.get('status')} ({counts})")
+                for test in data.get("failed_tests", [])[:10]:
+                    findings.append(
+                        {
+                            "title": f"Failing test: {test['test']}"[:200],
+                            "severity": "medium",
+                            "category": "testing",
+                            "description": test.get("reason") or "The test fails on this commit.",
+                            "recommendation": "Fix the code or the test before merging.",
+                            "evidence": [
+                                {"evidence_id": evidence_id, "quote": test["report_line"]}
+                            ],
+                        }
+                    )
             grouped: dict[tuple[str, str], list[dict]] = {}
             for item in data.get("issues", []):
                 grouped.setdefault((item["rule"], item["path"]), []).append(item)

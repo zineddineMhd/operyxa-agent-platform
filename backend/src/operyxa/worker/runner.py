@@ -16,7 +16,7 @@ from typing import Any
 from sqlalchemy import and_, or_, select
 
 from operyxa.agent.budget import Limits, RunBudget
-from operyxa.agent.graph import RunDeps, build_graph
+from operyxa.agent.graph import BASE_AGENTS, RunDeps, build_graph
 from operyxa.agent.store import RunStore
 from operyxa.config import Settings
 from operyxa.crypto import SecretBox
@@ -120,6 +120,17 @@ async def execute_run(run_id: uuid.UUID, deps: WorkerDeps) -> None:
             await store.update_run(run_id, commit_sha=scope["ref"])
             await store.emit(run_id, "run.started", {"commit_sha": scope["ref"]})
 
+        agents = set(BASE_AGENTS)
+        if (run.options or {}).get("run_tests"):
+            if not deps.gateway.tools_for("testing"):
+                return await _finish(
+                    deps,
+                    run_id,
+                    "failed",
+                    "test_runner_unavailable",
+                    {"code": "TEST_RUNNER_UNAVAILABLE", "message": "no test runner is connected"},
+                )
+            agents.add("testing")
         graph = build_graph(
             RunDeps(
                 run_id=run_id,
@@ -131,6 +142,7 @@ async def execute_run(run_id: uuid.UUID, deps: WorkerDeps) -> None:
                 gateway=deps.gateway,
                 budget=budget,
                 llm=MeteredLLM(deps.llm, run_id, budget, store, deps.settings.llm_pricing),
+                agents=frozenset(agents),
             ),
             deps.checkpointer,
         )

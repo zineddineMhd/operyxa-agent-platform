@@ -85,7 +85,8 @@ class ProjectOut(Out):
 class RunOptions(BaseModel):
     model_config = ConfigDict(extra="forbid")
     read_only: Literal[True] = True  # the MVP has no write path at all
-    run_tests: Literal[False] = False  # sandboxed test execution arrives in V1
+    # Runs the repository's test suite in a sandbox. Each execution waits for a human approval.
+    run_tests: bool = False
 
 
 class RunIn(BaseModel):

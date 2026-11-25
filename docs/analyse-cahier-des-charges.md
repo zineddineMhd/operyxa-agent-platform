@@ -35,8 +35,11 @@ relevés, avec la décision retenue dans le code. La partie UX/UI n'est pas trai
 - **Tables repoussées en V1** : `mcp_servers`, `tool_policies`, `workflows`,
   `github_connections`, `artifacts`. Au MVP le catalogue d'outils et la politique sont du code
   versionné et testé (`gateway/catalog.py`), pas de la configuration modifiable à chaud.
-- **Agents du MVP** : `repository` et `security`. `testing` (F-07) attend le sandbox V1 ; l'option
-  `run_tests` est refusée par l'API tant qu'il n'existe pas.
+- **Agents** : `repository` et `security` ; `testing` (F-07) seulement quand le run demande
+  `run_tests` et que le serveur active le test runner (sinon l'API refuse l'option).
+- **Pas de commandes libres pour les tests** : le cahier des charges parle d'exécuter des tests ;
+  le modèle ne choisit qu'un profil défini côté serveur (image et commandes figées), jamais une
+  ligne de commande. Un profil manquant s'ajoute dans `mcp_servers/sandbox.py`, avec revue.
 
 ## 3. Enseignements du premier run réel avec Gemini
 
@@ -72,7 +75,8 @@ des secrets modifie le texte que le modèle doit citer).
 
 | Priorité | Sujet | Note |
 |---|---|---|
-| Haute | Sandbox d'exécution de tests (F-07) | Le circuit d'approbation est en place et testé avec un faux exécuteur. Il manque le serveur MCP `test_runner` réel : conteneur sans réseau, sans secrets, utilisateur non privilégié, profils autorisés. À développer et tester sur une machine avec Docker. |
+| Moyenne | Test runner : déploiement | F-07 est en place (serveur `test_runner`, agent `testing`, approbation, tests d'évasion sur Docker réel). Restent : image Docker du serveur et service `compose`, essai avec un vrai modèle, et gVisor à valider sur l'hôte cible. L'installation des dépendances n'a pas été essayée avec réseau dans l'environnement de développement (pas d'accès aux registres depuis les conteneurs). |
+| Moyenne | Test runner : installation sans réseau | Avec `TEST_RUNNER_INSTALL_NETWORK=true`, le code d'installation du dépôt tourne avec accès réseau (sans secrets). Cible : un miroir de paquets interne comme seule destination autorisée. |
 | Haute | Consentement LLM | Le code d'un dépôt privé est envoyé au fournisseur du modèle. À afficher et faire accepter par projet ; vérifier les conditions d'usage des données du palier utilisé (le palier gratuit Gemini n'offre pas les mêmes garanties que le payant). |
 | Moyenne | GitHub App | Les dépôts privés passent aujourd'hui par un jeton par projet, chiffré au repos. Une GitHub App éviterait de stocker un jeton durable. |
 | Moyenne | Refresh tokens, limitation de débit sur `/auth/*` | À décider selon le mode de déploiement. |

@@ -130,7 +130,7 @@ export function Landing() {
           <div className="mt-10 grid overflow-hidden rounded-md border border-line sm:grid-cols-2 lg:grid-cols-3">
             {AGENTS.map(([name, text, contract], i) => (
               <article key={name} className="-mb-px -mr-px border-b border-r border-line p-6">
-                <Eyebrow>{`A${i + 1}`}{name === "testing" && " · planned"}</Eyebrow>
+                <Eyebrow>{`A${i + 1}`}{name === "testing" && " · opt-in"}</Eyebrow>
                 <h3 className="mt-4 font-display text-[22px] tracking-tight">{name}</h3>
                 <p className="mt-2 min-h-[60px] text-sm leading-relaxed text-muted">{text}</p>
                 <p className="mt-4 font-mono text-xs text-violet-soft">→ {contract}</p>

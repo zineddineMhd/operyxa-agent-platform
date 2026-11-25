@@ -76,6 +76,12 @@ async def platform_config(user: CurrentUser, settings: AppSettings) -> dict:
         "llm_fallback_model": models[1] if len(models) > 1 else None,
         "private_repositories": bool(settings.secrets_key),
         "read_only": True,
+        "test_runner": {
+            "enabled": settings.test_runner_enabled,
+            "install_network": settings.test_runner_install_network,
+            "timeout_seconds": settings.test_runner_timeout_seconds,
+            "approval_required": True,
+        },
         "limits": {
             "max_llm_calls": settings.max_agent_steps,
             "max_tool_calls": settings.max_tool_calls,

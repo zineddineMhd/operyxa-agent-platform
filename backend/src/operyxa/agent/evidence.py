@@ -22,6 +22,7 @@ def _locate(node: Any, quote: str, inherited_path: str | None = None) -> dict[st
     """Find the string leaf containing `quote` and the path/line of its enclosing object."""
     if isinstance(node, dict):
         path = node.get("path") if isinstance(node.get("path"), str) else inherited_path
+        direct = None
         for key, value in node.items():
             if isinstance(value, str) and key != "path":
                 line = _line_in(value, quote)
@@ -29,12 +30,19 @@ def _locate(node: Any, quote: str, inherited_path: str | None = None) -> dict[st
                     base = node.get("start_line") if key == "content" else node.get("line")
                     start = base + line - 1 if isinstance(base, int) else None
                     end = start + quote.strip().count("\n") if start is not None else None
-                    return {"path": path, "start_line": start, "end_line": end}
+                    direct = {"path": path, "start_line": start, "end_line": end}
+                    break
+        if direct is not None and direct["path"] is not None:
+            return direct
+        # A match without a file (e.g. a raw log) is a fallback: a nested object holding the same
+        # text with its own path (e.g. a failing test entry) locates the claim better.
         for value in node.values():
             if isinstance(value, (dict, list)):
                 found = _locate(value, quote, path)
-                if found:
+                if found and (found["path"] is not None or direct is None):
                     return found
+        if direct is not None:
+            return direct
         if isinstance(node.get("path"), str) and _norm(quote) == node["path"]:
             return {"path": path, "start_line": None, "end_line": None}
     elif isinstance(node, list):

@@ -25,8 +25,9 @@ CATALOG: dict[str, dict[str, tuple[Risk, frozenset[str]]]] = {
         "list_commits": ("low", frozenset({"repository"})),
         "get_commit_diff": ("low", frozenset({"repository"})),
     },
-    # Not served yet: listed so the policy is in place the day a sandboxed runner is connected.
+    # Executes the repository's own (untrusted) code in a sandbox: always behind an approval.
     "test_runner": {
+        "list_test_profiles": ("low", frozenset({"testing"})),
         "run_test_profile": ("high", frozenset({"testing"})),
     },
     "analysis": {

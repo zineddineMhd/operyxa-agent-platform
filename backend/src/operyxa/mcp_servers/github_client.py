@@ -5,12 +5,16 @@ Only GET requests exist here: the read-only guarantee of the MVP is structural.
 
 import re
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
 _SAFE_REF = re.compile(r"^[A-Za-z0-9_./-]{1,200}$")
 MAX_FILE_BYTES = 400_000
+# Hosts a tarball redirect may point to. The token is never sent to them: the redirect URL is
+# already signed by GitHub.
+ARCHIVE_HOSTS = ("codeload.github.com",)
 
 
 class GitHubError(Exception):
@@ -155,3 +159,44 @@ class GitHubClient:
                 for f in c.get("files", [])[:40]
             ],
         }
+
+    async def get_tarball(self, owner: str, repo: str, ref: str, max_bytes: int) -> bytes:
+        """Archive of one commit, for the test sandbox. GitHub answers with a redirect to a
+        signed download URL: it is followed by hand, only to a known host, without the token."""
+        check_repo(owner, repo)
+        check_ref(ref)
+        headers = {"Authorization": f"Bearer {self._token}"} if self._token else {}
+        url = f"/repos/{owner}/{repo}/tarball/{ref}"
+        try:
+            for hop in range(2):
+                async with self._http.stream("GET", url, headers=headers) as resp:
+                    if resp.status_code in (301, 302, 307, 308) and hop == 0:
+                        url = resp.headers.get("location", "")
+                        parts = urlsplit(url)
+                        if parts.scheme != "https" or parts.hostname not in ARCHIVE_HOSTS:
+                            raise GitHubError("UPSTREAM_ERROR", "unexpected archive location")
+                        headers = {}  # the signed URL needs no token, and must not see it
+                        continue
+                    _raise_for_status(resp.status_code)
+                    data = bytearray()
+                    async for chunk in resp.aiter_bytes():
+                        data.extend(chunk)
+                        if len(data) > max_bytes:
+                            raise GitHubError(
+                                "TOO_LARGE", f"repository archive is larger than {max_bytes} bytes"
+                            )
+                    return bytes(data)
+        except httpx.HTTPError as exc:
+            raise GitHubError("UPSTREAM_UNAVAILABLE", type(exc).__name__) from exc
+        raise GitHubError("UPSTREAM_ERROR", "too many redirects")
+
+
+def _raise_for_status(status: int) -> None:
+    if status == 404:
+        raise GitHubError("NOT_FOUND", "resource not found (or not accessible)")
+    if status in (401, 403, 429):
+        raise GitHubError("ACCESS_DENIED", "GitHub refused access to this resource")
+    if status >= 500:
+        raise GitHubError("UPSTREAM_UNAVAILABLE", f"GitHub returned {status}")
+    if status >= 300:
+        raise GitHubError("UPSTREAM_ERROR", f"GitHub returned {status}")

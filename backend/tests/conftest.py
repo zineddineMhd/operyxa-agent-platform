@@ -1,5 +1,7 @@
+import io
 import json
 import os
+import tarfile
 import uuid
 from typing import Any
 
@@ -35,6 +37,18 @@ REPO_FILES = {
     "app.py": "API_KEY = 'AKIAABCDEFGHIJKLMNOP'\nprint('hello')\n",
     ".env": "DATABASE_PASSWORD=super-secret-value\n",
 }
+
+
+def make_tarball(files: dict[str, str], top: str = "acme-demo-aaaaaaa") -> bytes:
+    """A GitHub-style archive: every entry under one top-level folder."""
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
+        for path, content in files.items():
+            data = content.encode()
+            info = tarfile.TarInfo(f"{top}/{path}")
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+    return buffer.getvalue()
 
 
 class FakeGitHub:
@@ -90,6 +104,8 @@ class FakeGitHub:
                     ]
                 },
             )
+        if rest.startswith("/tarball/"):
+            return httpx.Response(200, content=make_tarball(self.files))
         if rest.startswith("/contents/"):
             name = rest.removeprefix("/contents/")
             if name in self.files:

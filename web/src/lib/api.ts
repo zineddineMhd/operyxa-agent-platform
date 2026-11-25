@@ -59,6 +59,7 @@ export interface Overview {
 export interface PlatformConfig {
   llm_provider: string; llm_model: string; llm_fallback_model: string | null;
   private_repositories: boolean; read_only: boolean; limits: Limits;
+  test_runner: { enabled: boolean; install_network: boolean; timeout_seconds: number; approval_required: boolean };
 }
 export interface CatalogTool { server: string; tool: string; risk: string; policy: string; agents: string[]; access: string }
 
@@ -122,8 +123,8 @@ export const api = {
     for (const [key, value] of Object.entries(params)) if (value !== undefined && value !== "") query.set(key, String(value));
     return request<Page<Run>>(`/runs?${query}`);
   },
-  startRun: (project_id: string, objective: string) =>
-    post<{ run_id: string; status: RunStatus }>("/runs", { project_id, objective },
+  startRun: (project_id: string, objective: string, run_tests = false) =>
+    post<{ run_id: string; status: RunStatus }>("/runs", { project_id, objective, options: { run_tests } },
       { "Idempotency-Key": crypto.randomUUID() }),
   run: (id: string) => request<RunDetail>(`/runs/${id}`),
   steps: (id: string) => request<Step[]>(`/runs/${id}/steps`),

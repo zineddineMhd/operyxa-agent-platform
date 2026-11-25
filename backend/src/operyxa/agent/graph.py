@@ -34,7 +34,7 @@ from operyxa.gateway.gateway import CallContext, ToolGateway
 from operyxa.llm.base import MeteredLLM
 
 log = logging.getLogger(__name__)
-AVAILABLE_AGENTS = {"repository", "security"}
+BASE_AGENTS = frozenset({"repository", "security"})
 MAX_PLAN_ATTEMPTS = 2
 
 
@@ -76,6 +76,9 @@ class RunDeps:
     gateway: ToolGateway
     llm: MeteredLLM
     budget: RunBudget
+    # Agents the planner may use for this run: the base set, plus "testing" when the run asked
+    # for tests and a sandboxed test runner is connected.
+    agents: frozenset[str] = BASE_AGENTS
 
 
 STOPPING = (BudgetExceeded, RunCancelled, LLMUnavailable)
@@ -96,7 +99,7 @@ def build_graph(deps: RunDeps, checkpointer: Any):
         attempts = state.get("plan_attempts", 0) + 1
         request: dict[str, Any] = {
             "objective": deps.objective,
-            "available_agents": sorted(AVAILABLE_AGENTS),
+            "available_agents": sorted(deps.agents),
         }
         if state.get("plan_errors"):
             request["previous_errors"] = state["plan_errors"]
@@ -114,7 +117,7 @@ def build_graph(deps: RunDeps, checkpointer: Any):
             return {"stop_reason": _stop_reason(exc), "plan_attempts": attempts}
         raw = ai.tool_calls[0]["args"] if ai.tool_calls else {}
         plan, errors = validate_plan(
-            raw, max_steps=settings.max_plan_steps, allowed_agents=AVAILABLE_AGENTS
+            raw, max_steps=settings.max_plan_steps, allowed_agents=set(deps.agents)
         )
         if errors:
             await store.emit(run_id, "plan.rejected", {"errors": errors, "attempt": attempts})

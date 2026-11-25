@@ -4,7 +4,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-AgentName = Literal["repository", "security"]
+AgentName = Literal["repository", "security", "testing"]
 Severity = Literal["critical", "high", "medium", "low", "info"]
 Category = Literal[
     "architecture", "quality", "dependencies", "security", "testing", "maintainability", "history"

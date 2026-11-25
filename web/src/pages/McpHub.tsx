@@ -29,10 +29,13 @@ function ServerCard({ code, name, tools, status, scope, tone }: { code: string; 
 
 export function McpHub() {
   const tools = useQuery({ queryKey: ["tools"], queryFn: api.tools });
+  const config = useQuery({ queryKey: ["config"], queryFn: api.config, staleTime: 60_000 });
+  const testRunner = !!config.data?.test_runner.enabled;
+  const connected = (server: string) => server !== "test_runner" || testRunner;
   const byServer = new Map<string, CatalogTool[]>();
-  // A server whose tools all need an approval is listed by policy but not connected yet.
+  // The catalog lists every trusted tool; the test runner is connected only when the server enables it.
   for (const tool of tools.data?.tools ?? []) {
-    if (tool.policy === "allow") byServer.set(tool.server, [...(byServer.get(tool.server) ?? []), tool]);
+    if (connected(tool.server)) byServer.set(tool.server, [...(byServer.get(tool.server) ?? []), tool]);
   }
   return (
     <Page crumb="MCP Hub" title="mcp hub." subtitle="Connectors, tool permissions and operational health.">
@@ -43,9 +46,10 @@ export function McpHub() {
           <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
             {[...byServer].map(([server, list]) => (
               <ServerCard key={server} code={SERVERS[server]?.code ?? server.slice(0, 2).toUpperCase()} name={SERVERS[server]?.name ?? server}
-                tools={`${list.length} tools`} status="connected" scope="read-only" />
+                tools={`${list.length} tools`} status="connected" scope={server === "test_runner" ? "sandbox · approval" : "read-only"}
+                tone={server === "test_runner" ? "amber" : undefined} />
             ))}
-            <ServerCard code="TR" name="Test Runner" tools="planned · V1" status="restricted" scope="approval" tone="amber" />
+            {!testRunner && <ServerCard code="TR" name="Test Runner" tools="needs Docker" status="restricted" scope="approval" tone="amber" />}
           </div>
           <div className="mt-7 grid items-start gap-7 xl:grid-cols-[minmax(0,1fr)_360px]">
             <Panel className="overflow-x-auto">
@@ -66,7 +70,7 @@ export function McpHub() {
                       <td className="px-6 text-muted">{SERVERS[tool.server]?.name ?? tool.server}</td>
                       <td className={cx("px-6 capitalize", RISK[tool.risk])}>{tool.risk}</td>
                       <td className="px-6">{POLICY[tool.policy] ?? tool.policy}</td>
-                      <td className="px-6 text-muted">{tool.policy === "allow" ? tool.agents.join(", ") : "not connected yet"}</td>
+                      <td className="px-6 text-muted">{connected(tool.server) ? tool.agents.join(", ") : "not enabled"}</td>
                       <td className="px-6 text-muted">Enabled</td>
                     </tr>
                   ))}

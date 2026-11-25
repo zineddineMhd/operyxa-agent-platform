@@ -35,7 +35,7 @@ from operyxa.db.models import (
     utcnow,
 )
 from operyxa.db.session import Database
-from operyxa.errors import Conflict, NotFound
+from operyxa.errors import AppError, Conflict, NotFound
 
 router = APIRouter(tags=["runs"])
 SSE_POLL_SECONDS = 0.5
@@ -55,6 +55,12 @@ async def start_run(
     idempotency_key: Annotated[str | None, Header(max_length=128)] = None,
 ) -> RunAccepted:
     project = await owned_project(db, user, body.project_id)
+    if body.options.run_tests and not settings.test_runner_enabled:
+        raise AppError(
+            "test execution is not enabled on this server",
+            code="TEST_RUNNER_DISABLED",
+            status_code=422,
+        )
     run = Run(
         project_id=project.id,
         created_by=user.id,
@@ -66,7 +72,13 @@ async def start_run(
         limits={
             "max_llm_calls": settings.max_agent_steps,
             "max_tool_calls": settings.max_tool_calls,
-            "max_seconds": settings.max_run_seconds,
+            # A test run may legitimately take as long as its own two time limits.
+            "max_seconds": settings.max_run_seconds
+            + (
+                settings.test_runner_install_timeout_seconds + settings.test_runner_timeout_seconds
+                if body.options.run_tests
+                else 0
+            ),
             "max_cost_usd": settings.max_run_cost_usd,
         },
     )

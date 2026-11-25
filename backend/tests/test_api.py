@@ -158,7 +158,7 @@ async def test_run_results_and_sse_replay(client, env):
     overview = (await client.get("/api/v1/analytics/overview", headers=headers)).json()
     assert overview["runs_total"] == 1 and overview["success_rate"] == 1.0
     tools = (await client.get("/api/v1/mcp/tools", headers=headers)).json()["tools"]
-    assert len(tools) == 9
+    assert len(tools) == 10
     assert {t["tool"] for t in tools if t["access"] != "read-only"} == {
         "test_runner.run_test_profile"
     }
