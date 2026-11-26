@@ -79,7 +79,7 @@ des secrets modifie le texte que le modèle doit citer).
 | Moyenne | Test runner : installation sans réseau | Avec `TEST_RUNNER_INSTALL_NETWORK=true`, le code d'installation du dépôt tourne avec accès réseau (sans secrets). Cible : un miroir de paquets interne comme seule destination autorisée. |
 | Haute | Consentement LLM | Le code d'un dépôt privé est envoyé au fournisseur du modèle. À afficher et faire accepter par projet ; vérifier les conditions d'usage des données du palier utilisé (le palier gratuit Gemini n'offre pas les mêmes garanties que le payant). |
 | Moyenne | GitHub App | Les dépôts privés passent aujourd'hui par un jeton par projet, chiffré au repos. Une GitHub App éviterait de stocker un jeton durable. |
-| Moyenne | Refresh tokens, limitation de débit sur `/auth/*` | À décider selon le mode de déploiement. |
+| Moyenne | Refresh tokens | À décider selon le mode de déploiement. La limitation de débit sur `/auth/*` est en place (mémoire d'un processus API ; un stockage partagé sera nécessaire avec plusieurs instances). |
 | Moyenne | Vulnérabilités : lire les lockfiles | `scan_vulnerabilities` interroge osv.dev à partir des manifestes. Pour une plage (`^1.2`, `>=2.0`) il teste la version minimale autorisée ; lire le lockfile donnerait la version réellement installée. |
 | Moyenne | Jeu de cas d'évaluation | Pour comparer modèles et réglages de budget, et mesurer les fusions à tort de la déduplication. |
 | Basse | Observabilité (OpenTelemetry), rétention/purge, LISTEN/NOTIFY pour le SSE | V1. |
@@ -101,6 +101,13 @@ des secrets modifie le texte que le modèle doit citer).
 - **F-11 Exports et métriques** : `report.pdf`, `report.json`, `report.md?download=true` ; `GET /runs/{id}/metrics` (durée, taux de vérification, erreurs d'outils, budget consommé) et indicateurs ajoutés à `/analytics/overview`.
 - **F-12 PR avec confirmation** : agent `remediation` et serveur MCP `changes` qui ne fait que proposer un diff ; refus des workflows CI, des fichiers à secrets et des chemins sensibles. Une personne prépare la PR (instantané + `content_hash`), puis la confirme en citant ce hash ; le serveur crée alors une branche neuve, un commit et une PR brouillon avec un jeton d'écriture distinct. Aucun agent n'a d'outil d'écriture.
 - **F-13 Workflows et équipes** : 5 workflows intégrés (analyse, audit sécurité, architecture, tests, correction) et workflows enregistrés (qui ne peuvent que restreindre les agents) ; équipes avec rôles viewer / member / admin / owner appliqués à toutes les routes.
+
+## 3 quinquies. Mise en route (26/11)
+
+- `start.cmd` / `start.ps1` (Windows) et `start.sh` : une commande génère les secrets dans `.env` et lance toute la pile ; l'interface est servie par nginx dans `compose` (port 8080, SSE sans mise en tampon).
+- Démarrage refusé hors `local` si `JWT_SECRET_KEY` est la valeur d'exemple ou trop courte, ou si `SECRETS_KEY` est un texte d'exemple.
+- Worker et `python -m operyxa.api` utilisables sous Windows (boucle d'événements compatible psycopg, signaux).
+- Reste pour un usage en ligne : HTTPS et nom de domaine, sauvegardes de la base, consentement LLM par projet.
 
 ## 4. Planning : ajustements proposés
 

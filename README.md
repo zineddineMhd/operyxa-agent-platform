@@ -32,9 +32,31 @@ POST /api/v1/runs ──> PostgreSQL (runs = file d'attente) ──> worker
 | `mcp_servers/` | Serveurs MCP `github` (5 outils GET), `analysis` (règles statiques, vulnérabilités connues via osv.dev) et `test_runner` (tests du dépôt en conteneur isolé) |
 | `llm/` | Interface modèle, client Gemini, modèle `demo` déterministe, mesure de consommation |
 
-## Démarrage local
+## Démarrage rapide (Docker, une commande)
 
-Prérequis : Python 3.12+, [uv](https://docs.astral.sh/uv/), PostgreSQL 16.
+Prérequis : [Docker Desktop](https://www.docker.com/products/docker-desktop/) lancé.
+
+| Système | Démarrer | Arrêter |
+|---|---|---|
+| Windows | double-clic sur `start.cmd` (ou `.\start.ps1` dans PowerShell) | `.\start.ps1 stop` |
+| macOS / Linux | `./start.sh` | `./start.sh stop` |
+
+Le script crée `.env` à partir de `.env.example` en y générant `JWT_SECRET_KEY` et `SECRETS_KEY`,
+construit et lance la base, les migrations, l'API, le worker et l'interface, puis attend qu'ils
+répondent. Interface : http://localhost:8080 ; API : http://localhost:8000/docs. Les ports ne
+sont ouverts que sur l'ordinateur lui-même (`127.0.0.1`).
+
+Pour une vraie analyse, renseigner le modèle dans `.env` (`LLM_PROVIDER`, `LLM_API_KEY`) et un
+`GITHUB_TOKEN` en lecture seule, puis relancer le script. Guide pas à pas pour Windows :
+[docs/guide-demarrage-windows.pdf](docs/guide-demarrage-windows.pdf).
+
+Hors `ENVIRONMENT=local`, l'API et le worker refusent de démarrer si `JWT_SECRET_KEY` est la
+valeur d'exemple ou fait moins de 32 caractères. Les connexions et inscriptions sont limitées à
+`AUTH_RATE_LIMIT_PER_MINUTE` (10 par défaut) par e-mail et par client.
+
+## Démarrage local sans Docker (développement)
+
+Prérequis : Python 3.12+, [uv](https://docs.astral.sh/uv/), PostgreSQL 16, Node 22.
 
 ```bash
 cp .env.example .env
@@ -45,21 +67,23 @@ cd backend && uv sync && uv run alembic upgrade head
 ```
 
 ```bash
-uv run uvicorn operyxa.api.main:app --reload
+uv run python -m operyxa.api
 ```
 
 ```bash
 uv run python -m operyxa.worker
 ```
 
-Interface web (Node 22), dans un autre terminal :
+Interface web, dans un autre terminal :
 
 ```bash
 cd web && npm install && npm run dev
 ```
 
 Interface : http://localhost:5173 (les appels `/api` sont relayés vers le port 8000).
-Documentation interactive de l'API : http://localhost:8000/docs.
+`python -m operyxa.api` équivaut à `uvicorn operyxa.api.main:app`, mais fonctionne aussi sous
+Windows (le pilote PostgreSQL asynchrone n'accepte pas la boucle par défaut de Windows).
+
 ## Modèles
 
 | `LLM_PROVIDER` | Variables | Remarque |
@@ -71,7 +95,6 @@ Documentation interactive de l'API : http://localhost:8000/docs.
 Dépôts privés : définir `SECRETS_KEY` sur le serveur, puis saisir un jeton GitHub en lecture
 seule (Contents + Metadata) à la création du projet. Il est chiffré au repos et jamais renvoyé.
 
-Avec Docker : `docker compose -f infrastructure/compose.yml up --build`.
 
 ## Exécution des tests (F-07)
 

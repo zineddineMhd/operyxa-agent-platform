@@ -1,5 +1,6 @@
 """Runtime configuration. Every value comes from the environment (see .env.example)."""
 
+import logging
 from functools import lru_cache
 from typing import Literal
 
@@ -91,10 +92,46 @@ class Settings(BaseSettings):
     # project's separate write token. Off disables the endpoints and the remediation agent.
     pull_requests_enabled: bool = True
 
+    # Login and sign-up attempts allowed per minute, per email (login) and per client (sign-up).
+    # 0 disables the limit.
+    auth_rate_limit_per_minute: int = 10
+
     # Worker
     worker_poll_seconds: float = 1.0
     worker_lease_seconds: int = 60
     worker_concurrency: int = 2
+
+    def secret_problems(self) -> list[str]:
+        """Secrets left at a default, placeholder or too-short value."""
+        problems = []
+        jwt = self.jwt_secret_key
+        if jwt in DEFAULT_SECRETS or jwt.lower().startswith("replace_me"):
+            problems.append("JWT_SECRET_KEY is still the default value")
+        elif len(jwt) < 32:
+            problems.append("JWT_SECRET_KEY is shorter than 32 characters")
+        if self.secrets_key and (
+            self.secrets_key in DEFAULT_SECRETS or self.secrets_key.lower().startswith("replace_me")
+        ):
+            problems.append("SECRETS_KEY is still a placeholder value")
+        return problems
+
+    def check_secrets(self) -> None:
+        """Refuse to start outside local and CI with weak secrets; warn in local."""
+        problems = self.secret_problems()
+        if not problems:
+            return
+        if self.environment in ("staging", "production"):
+            raise RuntimeError(
+                "refusing to start: "
+                + "; ".join(problems)
+                + '. Generate one with: python -c "import secrets; print(secrets.token_urlsafe(48))"'
+            )
+        if self.environment == "local":
+            for problem in problems:
+                logging.getLogger("operyxa.config").warning("%s (accepted in local only)", problem)
+
+
+DEFAULT_SECRETS = {"", "change-me", "changeme", "secret", "replace_me_with_a_long_random_value"}
 
 
 @lru_cache

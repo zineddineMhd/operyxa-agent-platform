@@ -1,10 +1,12 @@
-# Local stack: docker compose -f infrastructure/compose.yml up --build
+# Whole platform on one machine: docker compose -f infrastructure/compose.yml up -d --build
+# Interface: http://localhost:8080 (API docs: http://localhost:8000/docs).
 # Redis is intentionally absent from the MVP: PostgreSQL is the queue and the event log.
 x-backend: &backend
   build: ../backend
   env_file: [{path: ../.env, required: false}]
   environment:
     DATABASE_URL: postgresql+psycopg://operyxa:operyxa@postgres:5432/operyxa
+  restart: unless-stopped
   depends_on:
     migrate: {condition: service_completed_successfully}
 
@@ -13,7 +15,9 @@ services:
     image: postgres:16-alpine
     environment: {POSTGRES_USER: operyxa, POSTGRES_PASSWORD: operyxa, POSTGRES_DB: operyxa}
     volumes: [pgdata:/var/lib/postgresql/data]
-    ports: ["5432:5432"]
+    # Reachable from this computer only.
+    ports: ["127.0.0.1:5432:5432"]
+    restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U operyxa"]
       interval: 3s
@@ -29,11 +33,22 @@ services:
 
   api:
     <<: *backend
-    ports: ["8000:8000"]
+    ports: ["127.0.0.1:8000:8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz')"]
+      interval: 5s
+      retries: 20
 
   worker:
     <<: *backend
     command: python -m operyxa.worker
+
+  web:
+    build: ../web
+    ports: ["127.0.0.1:8080:80"]
+    restart: unless-stopped
+    depends_on:
+      api: {condition: service_healthy}
 
 volumes:
   pgdata:

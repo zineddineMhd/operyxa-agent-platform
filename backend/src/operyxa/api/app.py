@@ -36,8 +36,7 @@ def _error(request: Request, status: int, code: str, message: str, details=None)
 
 def create_app(settings: Settings | None = None, db: Database | None = None) -> FastAPI:
     settings = settings or get_settings()
-    if settings.environment in ("staging", "production") and settings.jwt_secret_key == "change-me":
-        raise RuntimeError("JWT_SECRET_KEY must be set outside local environments")
+    settings.check_secrets()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -47,6 +46,7 @@ def create_app(settings: Settings | None = None, db: Database | None = None) -> 
     app = FastAPI(title="Operyxa API", version="0.1.0", lifespan=lifespan)
     app.state.settings = settings
     app.state.db = db or Database(settings.database_url)
+    app.state.auth_limiter = auth.SlidingWindow()
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
