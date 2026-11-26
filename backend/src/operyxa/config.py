@@ -61,13 +61,35 @@ class Settings(BaseSettings):
     approval_ttl_seconds: int = 600
     approval_poll_seconds: float = 1.0
 
+    # Sandboxed test execution (F-07). Off by default: it needs a Docker daemon, and every
+    # run of a test profile still waits for a human approval.
+    test_runner_enabled: bool = False
+    test_runner_timeout_seconds: int = 300
+    test_runner_install_timeout_seconds: int = 300
+    # Dependency installation may need a package registry. Tests themselves never get network.
+    test_runner_install_network: bool = True
+    test_runner_memory_mb: int = 1024
+    test_runner_cpus: float = 1.0
+    test_runner_max_concurrent: int = 1
+    test_runner_max_archive_mb: int = 50
+    # Optional container runtime with a stronger kernel boundary, e.g. "runsc" (gVisor).
+    test_runner_docker_runtime: str = ""
+    # Image per profile, e.g. {"python-pytest": "registry.local/python-test:3.12"}.
+    test_runner_images: dict[str, str] = Field(default_factory=dict)
+
     # MCP servers. Empty URL = run the server in-process (default for local/CI).
     mcp_github_url: str = ""
     mcp_analysis_url: str = ""
+    mcp_test_runner_url: str = ""
+    mcp_changes_url: str = ""
     # Vulnerability database. Only package names and versions are sent. Empty URL disables it.
     osv_api_url: str = "https://api.osv.dev"
     github_api_url: str = "https://api.github.com"
     github_token: str = ""
+
+    # Pull requests from fix proposals (F-12): created only after a person confirms, with the
+    # project's separate write token. Off disables the endpoints and the remediation agent.
+    pull_requests_enabled: bool = True
 
     # Worker
     worker_poll_seconds: float = 1.0

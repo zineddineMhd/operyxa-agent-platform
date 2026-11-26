@@ -4,7 +4,7 @@ Plan. Execute. Verify. Un utilisateur confie une mission d'analyse d'un dépôt 
 agents en lecture seule l'exécutent sous contrôle serveur et produisent un rapport dont chaque
 constat renvoie à une preuve vérifiée.
 
-État : **MVP lecture seule** — backend (API, worker, agents, passerelle MCP) et interface web (`web/`).
+État : **MVP lecture seule**, plus l'exécution des tests en sandbox (option, avec approbation) — backend (API, worker, agents, passerelle MCP) et interface web (`web/`).
 Analyse du cahier des charges et décisions : [docs/analyse-cahier-des-charges.md](docs/analyse-cahier-des-charges.md).
 
 ## Architecture
@@ -14,11 +14,11 @@ POST /api/v1/runs ──> PostgreSQL (runs = file d'attente) ──> worker
                                                               │
    planner (LLM) ─> validation du plan ─> superviseur (déterministe)
                                               │  étapes en parallèle
-                                   agents ReAct bornés (repository, security)
+                                   agents ReAct bornés (repository, security, testing)
                                               │  chaque appel d'outil
                                    passerelle : catalogue > politique > schéma > périmètre
                                               │  > budget > exécution > redaction > audit
-                                   serveurs MCP lecture seule (github, analysis)
+                       serveurs MCP github, analysis (lecture) et test_runner (sandbox, approbation)
                                               │
               vérificateur de preuves (déterministe) ─> rapport ─> run_events ─> SSE
 ```
@@ -29,7 +29,7 @@ POST /api/v1/runs ──> PostgreSQL (runs = file d'attente) ──> worker
 | `worker/` | Prise en charge des runs, reprise après crash depuis les checkpoints LangGraph |
 | `agent/` | Graphe LangGraph, boucle ReAct, validation du plan, vérification des preuves, budgets |
 | `gateway/` | Point de passage unique vers les outils : catalogue de confiance, politique, redaction |
-| `mcp_servers/` | Serveurs MCP `github` (5 outils GET) et `analysis` (règles statiques, vulnérabilités connues via osv.dev) |
+| `mcp_servers/` | Serveurs MCP `github` (5 outils GET), `analysis` (règles statiques, vulnérabilités connues via osv.dev) et `test_runner` (tests du dépôt en conteneur isolé) |
 | `llm/` | Interface modèle, client Gemini, modèle `demo` déterministe, mesure de consommation |
 
 ## Démarrage local
@@ -73,6 +73,43 @@ seule (Contents + Metadata) à la création du projet. Il est chiffré au repos 
 
 Avec Docker : `docker compose -f infrastructure/compose.yml up --build`.
 
+## Exécution des tests (F-07)
+
+Option `run_tests` d'un run (case « Run the test suite » dans l'interface). Désactivée tant que
+`TEST_RUNNER_ENABLED=true` n'est pas défini côté API et worker, avec un démon Docker accessible.
+
+Déroulé : le planificateur ajoute une étape `testing` ; l'agent liste les profils applicables
+(`python-pytest`, `node-npm-test`) et en demande un ; le run passe en `waiting_approval` jusqu'à la
+décision dans l'Approval Center ; après accord, le serveur télécharge l'archive du commit épinglé,
+retire les fichiers sensibles (`.env`, clés), installe les dépendances dans un premier conteneur,
+puis lance les tests dans un second conteneur ; chaque test en échec devient un constat vérifié
+qui pointe vers son fichier de test.
+
+Isolation, appliquée par le serveur et non par le prompt :
+
+| Mesure | Détail |
+|---|---|
+| Commande | Le modèle choisit un nom de profil dans une liste fermée (enum du schéma), jamais une commande |
+| Réseau | Aucun pendant les tests (`--network none`) ; pendant l'installation seulement si `TEST_RUNNER_INSTALL_NETWORK=true` |
+| Secrets | Le jeton GitHub reste hors du conteneur ; aucune variable d'environnement de l'hôte ; `.env` et clés retirés de l'archive |
+| Droits | Utilisateur `65534`, aucune capability, `no-new-privileges`, système de fichiers racine en lecture seule |
+| Ressources | Mémoire, CPU, nombre de processus et durée bornés ; conteneur tué au délai |
+| Nettoyage | Conteneurs `--rm`, volume de travail supprimé après chaque run |
+
+Le démon Docker donne le contrôle de sa machine : faire tourner le serveur `test_runner` sur un
+hôte dédié (`python -m operyxa.mcp_servers test_runner 8103`, puis `MCP_TEST_RUNNER_URL`), et si
+possible avec gVisor (`TEST_RUNNER_DOCKER_RUNTIME=runsc`). L'installation avec réseau exécute le
+code d'installation du dépôt (par exemple `setup.py`) : pour s'en passer, fournir des images avec
+les dépendances préinstallées (`TEST_RUNNER_IMAGES`) et mettre `TEST_RUNNER_INSTALL_NETWORK=false`.
+
+## Fonctions V1/V2
+
+- **Workflows** (`GET /api/v1/workflows`) : analyse, audit sécurité, revue d'architecture, tests, correction ; workflows enregistrés par utilisateur ou équipe.
+- **Équipes** (`/api/v1/teams`) : un projet partagé avec une équipe est accessible selon le rôle (viewer : lecture ; member : lancer, approuver ; admin : gérer jetons, politiques, PR).
+- **MCP Hub** : `GET /api/v1/mcp/servers?probe=true`, politiques d'outils par projet (`/api/v1/projects/{id}/tool-policies`).
+- **Exports** : `report.pdf`, `report.json`, `report.md` ; métriques par run (`/runs/{id}/metrics`).
+- **Pull requests** : option « Propose fixes » ; préparer (`POST /runs/{id}/pull-requests`) puis confirmer (`POST /pull-requests/{id}/confirm` avec le `content_hash`). Nécessite un jeton d'écriture distinct sur le projet (Contents + Pull requests : write). `PULL_REQUESTS_ENABLED=false` désactive tout.
+
 ## Tests
 
 ```bash
@@ -80,8 +117,9 @@ cd backend && uv run pytest
 ```
 
 SQLite par défaut ; définir `TEST_DATABASE_URL` pour PostgreSQL. Les cas T-01 à T-10 du cahier des
-charges sont couverts, sauf la partie « test échouant » de T-06 (exécution de tests en sandbox,
-pas encore développée).
+charges sont couverts. `tests/test_sandbox_docker.py` exécute de vrais conteneurs (tentatives de
+sortie réseau, lecture de secrets, écriture hors du dossier, boucle infinie, excès de mémoire) ; il
+est ignoré si aucun démon Docker n'est joignable.
 
 ## Interface web
 
@@ -91,5 +129,5 @@ Runs & Traces, MCP Hub, Approvals, Reports (constats avec preuve ouvrable en un 
 palette de commandes `Ctrl K`.
 
 Toutes les données affichées viennent de l'API. Ce que le backend ne fait pas encore est indiqué
-comme tel : Test Runner « not enabled » (l'Approval Center est fonctionnel mais aucun outil à
-risque élevé n'est encore branché), bouton « Cancel run » à la place de « Pause run ».
+comme tel : Test Runner « Not enabled » tant que le serveur ne l'active pas, bouton « Cancel run »
+à la place de « Pause run ».

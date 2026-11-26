@@ -30,7 +30,7 @@ class StepInput:
 async def run_step(
     step: StepInput, *, llm: MeteredLLM, gateway: ToolGateway, ctx: CallContext, max_turns: int
 ) -> StepResult:
-    tool_defs = gateway.tools_for(step.agent)
+    tool_defs = gateway.tools_for(step.agent, ctx.policy)
     tools = [tool_spec(t.model_name, t.description, t.input_schema) for t in tool_defs]
     tools.append(SUBMIT_TOOL)
     task: dict[str, Any] = {

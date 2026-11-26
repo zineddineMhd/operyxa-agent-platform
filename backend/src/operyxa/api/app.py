@@ -7,7 +7,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
-from operyxa.api.routes import approvals, auth, platform, projects, runs
+from operyxa.api.routes import (
+    approvals,
+    auth,
+    platform,
+    policies,
+    projects,
+    pull_requests,
+    runs,
+    teams,
+    workflows,
+)
 from operyxa.config import Settings, get_settings
 from operyxa.db.session import Database
 from operyxa.errors import AppError
@@ -40,7 +50,7 @@ def create_app(settings: Settings | None = None, db: Database | None = None) -> 
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
-        allow_methods=["GET", "POST"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
         allow_headers=["*"],
         expose_headers=["X-Request-ID"],
     )
@@ -76,6 +86,10 @@ def create_app(settings: Settings | None = None, db: Database | None = None) -> 
         runs.router,
         approvals.router,
         platform.router,
+        policies.router,
+        teams.router,
+        workflows.router,
+        pull_requests.router,
     ):
         app.include_router(router, prefix="/api/v1")
     return app

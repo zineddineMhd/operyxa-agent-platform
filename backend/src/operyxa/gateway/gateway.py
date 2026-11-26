@@ -12,7 +12,8 @@ import re
 import secrets
 import time
 import uuid
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any
 
@@ -26,7 +27,8 @@ from operyxa.errors import RunCancelled
 from operyxa.gateway.breaker import CircuitBreaker
 from operyxa.gateway.catalog import CATALOG, SCOPE_PARAMS, ToolDef, decide, is_sensitive_path
 from operyxa.gateway.providers import ToolProvider
-from operyxa.gateway.redaction import redact
+from operyxa.gateway.redaction import redact, redact_tool_output
+from operyxa.gateway.truncation import truncate_output
 
 _ERROR_CODE = re.compile(r"\b([A-Z][A-Z_]{2,}): (.*)$", re.S)
 RETRYABLE = {"UPSTREAM_UNAVAILABLE", "TOOL_TIMEOUT", "TOOL_TRANSPORT_ERROR"}
@@ -42,6 +44,8 @@ class CallContext:
     scope: dict[str, str]
     budget: RunBudget | None = None
     actor_id: uuid.UUID | None = None
+    # Project tool-policy overrides frozen on the run (F-10): {tool name: mode}.
+    policy: Mapping[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -115,11 +119,18 @@ class ToolGateway:
                 tools[tool.name] = tool
         self._tools = tools
 
-    def tools_for(self, agent: str) -> list[ToolDef]:
-        """Tools an agent may ask for. High-risk ones are offered, then gated by an approval."""
+    def tools_for(self, agent: str, policy: Mapping[str, str] | None = None) -> list[ToolDef]:
+        """Tools an agent may ask for. High-risk ones are offered, then gated by an approval.
+        A tool the project disabled is not even shown to the model."""
         return [
-            t for t in self._tools.values() if agent in t.agents and decide(t, agent)[0] != "deny"
+            t
+            for t in self._tools.values()
+            if agent in t.agents and decide(t, agent, policy)[0] != "deny"
         ]
+
+    @property
+    def servers(self) -> list[str]:
+        return list(self._providers)
 
     def resolve_model_name(self, model_name: str) -> str:
         return model_name.replace("__", ".")
@@ -136,7 +147,7 @@ class ToolGateway:
                 "TOOL_UNKNOWN",
                 "this tool is not in the trusted catalog",
             )
-        decision, reason = decide(tool, ctx.agent)
+        decision, reason = decide(tool, ctx.agent, ctx.policy)
         if decision == "deny":
             return await self._reject(
                 ctx, tool_name, args, tool.risk, "TOOL_PERMISSION_DENIED", reason
@@ -182,7 +193,7 @@ class ToolGateway:
                 "tool": tool_name,
                 "agent": ctx.agent,
                 "step": ctx.step_key,
-                "args": args,
+                "args": _safe_args(args),
                 "risk": tool.risk,
                 "decision": decision,
             },
@@ -195,10 +206,10 @@ class ToolGateway:
 
         truncated = False
         if ok:
+            text = redact_tool_output(text)
+            text, truncated = truncate_output(text, self._settings.tool_output_max_chars)
+        else:
             text = redact(text)
-            limit = self._settings.tool_output_max_chars
-            if len(text) > limit:
-                text, truncated = text[:limit] + "\n[output truncated by gateway]", True
         evidence_id = "ev_" + secrets.token_hex(4)
         await self._store.save_tool_call(
             run_id=ctx.run_id,
@@ -206,7 +217,7 @@ class ToolGateway:
             step_key=ctx.step_key,
             agent=ctx.agent,
             tool=tool_name,
-            args=args,
+            args=_safe_args(args),
             idempotency_key=key,
             risk=tool.risk,
             decision=decision,
@@ -296,8 +307,11 @@ class ToolGateway:
         self, tool: ToolDef, args: dict[str, Any]
     ) -> tuple[bool, str, str | None, int]:
         provider, breaker = self._providers[tool.server], self._breakers[tool.server]
+        timeout = getattr(provider, "timeout_seconds", None) or self._settings.tool_timeout_seconds
+        retries = getattr(provider, "max_retries", None)
+        retries = self._settings.tool_max_retries if retries is None else retries
         attempts, code, message = 0, None, ""
-        for attempt in range(self._settings.tool_max_retries + 1):
+        for attempt in range(retries + 1):
             if not breaker.allow():
                 return (
                     False,
@@ -307,7 +321,7 @@ class ToolGateway:
                 )
             attempts += 1
             try:
-                async with asyncio.timeout(self._settings.tool_timeout_seconds):
+                async with asyncio.timeout(timeout):
                     result = await provider.call(tool.remote_name, args)
                 if not result.is_error:
                     breaker.success()
@@ -323,7 +337,7 @@ class ToolGateway:
                 breaker.success()  # the connector answered; this is a domain error
                 return False, message, code, attempts
             breaker.failure()
-            if attempt < self._settings.tool_max_retries:
+            if attempt < retries:
                 await asyncio.sleep(min(0.5 * 2**attempt, 4.0))
         return False, message, code, attempts
 

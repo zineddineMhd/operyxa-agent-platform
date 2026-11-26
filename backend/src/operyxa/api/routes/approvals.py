@@ -5,7 +5,7 @@ from fastapi import APIRouter
 from sqlalchemy import select, update
 
 from operyxa.agent.store import RunStore
-from operyxa.api.deps import CurrentUser, Db, OwnedRun
+from operyxa.api.deps import CurrentUser, Db, OwnedRun, accessible_projects, project_role, require
 from operyxa.api.schemas import ApprovalDecision, ApprovalOut
 from operyxa.db.models import Approval, Project, Run, RunEvent, aware, utcnow
 from operyxa.errors import AppError, Conflict, NotFound
@@ -23,8 +23,7 @@ async def list_approvals(
     query = (
         select(Approval)
         .join(Run, Run.id == Approval.run_id)
-        .join(Project, Project.id == Run.project_id)
-        .where(Project.owner_id == user.id)
+        .where(Run.project_id.in_(accessible_projects(user)))
     )
     if status:
         query = query.where(Approval.status == status)
@@ -55,16 +54,22 @@ async def decide_approval(
     if user.role not in REVIEWER_ROLES:
         raise AppError("your role cannot review approvals", code="FORBIDDEN", status_code=403)
     async with db.session.begin() as s:
-        approval = (
+        row = (
             await s.execute(
-                select(Approval)
+                select(Approval, Project)
                 .join(Run, Run.id == Approval.run_id)
                 .join(Project, Project.id == Run.project_id)
-                .where(Approval.id == approval_id, Project.owner_id == user.id)
+                .where(
+                    Approval.id == approval_id,
+                    Run.project_id.in_(accessible_projects(user)),
+                )
             )
-        ).scalar_one_or_none()
-        if approval is None:
+        ).one_or_none()
+        if row is None:
             raise NotFound("approval not found")
+        approval, project = row
+        # A team viewer can see the request but not decide it.
+        require(await project_role(db, user, project), "run")
         if approval.status == "pending" and utcnow() >= aware(approval.expires_at):
             await s.execute(
                 update(Approval)

@@ -10,7 +10,7 @@ the dependency graph, so no LLM call (and no hallucinated routing) is spent on i
 import json
 import logging
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Annotated, Any, TypedDict
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -34,7 +34,7 @@ from operyxa.gateway.gateway import CallContext, ToolGateway
 from operyxa.llm.base import MeteredLLM
 
 log = logging.getLogger(__name__)
-AVAILABLE_AGENTS = {"repository", "security"}
+BASE_AGENTS = frozenset({"repository", "security"})
 MAX_PLAN_ATTEMPTS = 2
 
 
@@ -76,6 +76,11 @@ class RunDeps:
     gateway: ToolGateway
     llm: MeteredLLM
     budget: RunBudget
+    # Agents the planner may use for this run: the base set, plus "testing" when the run asked
+    # for tests and a sandboxed test runner is connected.
+    agents: frozenset[str] = BASE_AGENTS
+    # Project tool-policy overrides frozen on the run (F-10).
+    policy: dict[str, str] = field(default_factory=dict)
 
 
 STOPPING = (BudgetExceeded, RunCancelled, LLMUnavailable)
@@ -96,7 +101,7 @@ def build_graph(deps: RunDeps, checkpointer: Any):
         attempts = state.get("plan_attempts", 0) + 1
         request: dict[str, Any] = {
             "objective": deps.objective,
-            "available_agents": sorted(AVAILABLE_AGENTS),
+            "available_agents": sorted(deps.agents),
         }
         if state.get("plan_errors"):
             request["previous_errors"] = state["plan_errors"]
@@ -114,7 +119,7 @@ def build_graph(deps: RunDeps, checkpointer: Any):
             return {"stop_reason": _stop_reason(exc), "plan_attempts": attempts}
         raw = ai.tool_calls[0]["args"] if ai.tool_calls else {}
         plan, errors = validate_plan(
-            raw, max_steps=settings.max_plan_steps, allowed_agents=AVAILABLE_AGENTS
+            raw, max_steps=settings.max_plan_steps, allowed_agents=set(deps.agents)
         )
         if errors:
             await store.emit(run_id, "plan.rejected", {"errors": errors, "attempt": attempts})
@@ -202,7 +207,7 @@ def build_graph(deps: RunDeps, checkpointer: Any):
         key, agent = step["id"], step["agent"]
         await store.update_step(run_id, key, status="running", started_at=utcnow(), error=None)
         await store.emit(run_id, "agent.started", {"step": key, "agent": agent})
-        ctx = CallContext(run_id, key, agent, deps.scope, deps.budget, deps.actor_id)
+        ctx = CallContext(run_id, key, agent, deps.scope, deps.budget, deps.actor_id, deps.policy)
         update: dict[str, Any] = {}
         try:
             result = await run_step(

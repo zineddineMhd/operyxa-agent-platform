@@ -21,6 +21,9 @@ class ProviderResult:
 
 class ToolProvider(Protocol):
     name: str
+    # Optional overrides of the gateway defaults (a test run takes minutes, and is never retried).
+    timeout_seconds: float | None
+    max_retries: int | None
 
     async def list_tools(self) -> list[RemoteTool]: ...
 
@@ -34,9 +37,18 @@ class MCPProvider:
     across asyncio tasks; connection reuse is an optimisation for later.
     """
 
-    def __init__(self, name: str, target: Any):
+    def __init__(
+        self,
+        name: str,
+        target: Any,
+        *,
+        timeout_seconds: float | None = None,
+        max_retries: int | None = None,
+    ):
         self.name = name
         self._target = target
+        self.timeout_seconds = timeout_seconds
+        self.max_retries = max_retries
 
     async def list_tools(self) -> list[RemoteTool]:
         async with Client(self._target) as client:

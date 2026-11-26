@@ -35,8 +35,11 @@ relevés, avec la décision retenue dans le code. La partie UX/UI n'est pas trai
 - **Tables repoussées en V1** : `mcp_servers`, `tool_policies`, `workflows`,
   `github_connections`, `artifacts`. Au MVP le catalogue d'outils et la politique sont du code
   versionné et testé (`gateway/catalog.py`), pas de la configuration modifiable à chaud.
-- **Agents du MVP** : `repository` et `security`. `testing` (F-07) attend le sandbox V1 ; l'option
-  `run_tests` est refusée par l'API tant qu'il n'existe pas.
+- **Agents** : `repository` et `security` ; `testing` (F-07) seulement quand le run demande
+  `run_tests` et que le serveur active le test runner (sinon l'API refuse l'option).
+- **Pas de commandes libres pour les tests** : le cahier des charges parle d'exécuter des tests ;
+  le modèle ne choisit qu'un profil défini côté serveur (image et commandes figées), jamais une
+  ligne de commande. Un profil manquant s'ajoute dans `mcp_servers/sandbox.py`, avec revue.
 
 ## 3. Enseignements du premier run réel avec Gemini
 
@@ -72,14 +75,32 @@ des secrets modifie le texte que le modèle doit citer).
 
 | Priorité | Sujet | Note |
 |---|---|---|
-| Haute | Sandbox d'exécution de tests (F-07) | Le circuit d'approbation est en place et testé avec un faux exécuteur. Il manque le serveur MCP `test_runner` réel : conteneur sans réseau, sans secrets, utilisateur non privilégié, profils autorisés. À développer et tester sur une machine avec Docker. |
+| Moyenne | Test runner : déploiement | F-07 est en place (serveur `test_runner`, agent `testing`, approbation, tests d'évasion sur Docker réel). Restent : image Docker du serveur et service `compose`, essai avec un vrai modèle, et gVisor à valider sur l'hôte cible. L'installation des dépendances n'a pas été essayée avec réseau dans l'environnement de développement (pas d'accès aux registres depuis les conteneurs). |
+| Moyenne | Test runner : installation sans réseau | Avec `TEST_RUNNER_INSTALL_NETWORK=true`, le code d'installation du dépôt tourne avec accès réseau (sans secrets). Cible : un miroir de paquets interne comme seule destination autorisée. |
 | Haute | Consentement LLM | Le code d'un dépôt privé est envoyé au fournisseur du modèle. À afficher et faire accepter par projet ; vérifier les conditions d'usage des données du palier utilisé (le palier gratuit Gemini n'offre pas les mêmes garanties que le payant). |
 | Moyenne | GitHub App | Les dépôts privés passent aujourd'hui par un jeton par projet, chiffré au repos. Une GitHub App éviterait de stocker un jeton durable. |
 | Moyenne | Refresh tokens, limitation de débit sur `/auth/*` | À décider selon le mode de déploiement. |
 | Moyenne | Vulnérabilités : lire les lockfiles | `scan_vulnerabilities` interroge osv.dev à partir des manifestes. Pour une plage (`^1.2`, `>=2.0`) il teste la version minimale autorisée ; lire le lockfile donnerait la version réellement installée. |
 | Moyenne | Jeu de cas d'évaluation | Pour comparer modèles et réglages de budget, et mesurer les fusions à tort de la déduplication. |
-| Moyenne | Citations de texte masqué | Quand un secret est masqué, le modèle cite parfois le texte d'origine supposé : le constat part en « non vérifié ». Le guider dans le prompt, ou accepter la citation de la ligne masquée. |
-| Basse | Observabilité (OpenTelemetry), rétention/purge, export PDF, LISTEN/NOTIFY pour le SSE | V1. |
+| Basse | Observabilité (OpenTelemetry), rétention/purge, LISTEN/NOTIFY pour le SSE | V1. |
+| Moyenne | Équipes : invitations | Un membre doit déjà avoir un compte ; pas d'e-mail d'invitation. |
+| Moyenne | PR : essai réel | Le flux est testé contre un faux GitHub ; à essayer sur un dépôt de test avec un jeton d'écriture dédié. |
+
+## 3 ter. Défauts des essais réels corrigés (26/11)
+
+| Défaut | Correction |
+|---|---|
+| La redaction tournait sur le JSON encodé : `KEY = "valeur"` devenait `KEY = \"valeur\"` et échappait aux motifs ; le secret partait au modèle et en base. | Redaction feuille par feuille sur le JSON décodé (`redact_tool_output`), valeurs entre guillemets masquées en entier (espaces compris), nouveaux formats de clés (`nvapi-`, `sk-`, Stripe). Arguments, événements, résumés et constats sont aussi masqués. |
+| Une clé privée multi-ligne devenait une seule ligne : les numéros de ligne suivants étaient faux. | Le bloc masqué garde BEGIN/END et son nombre de lignes. |
+| La troncature à 40 000 caractères coupait le JSON : la preuve perdait chemin et lignes. | Troncature structurée (`gateway/truncation.py`) : les plus grandes chaînes sont raccourcies sur des fins de ligne, les listes perdent leur queue ; le JSON reste valide. |
+| Le modèle citait l'original supposé d'un secret masqué : constat « non vérifié ». | Le prompt demande de citer le texte masqué ; le vérificateur compare aussi les deux côtés masqués. La citation stockée ne contient jamais le secret. |
+
+## 3 quater. Exigences V1/V2 livrées (26/11)
+
+- **F-10 MCP Hub et politiques** : `GET /mcp/servers?probe=true` (santé, outils disponibles, outils ignorés hors catalogue) ; politiques par projet (`/projects/{id}/tool-policies`) : désactiver un outil ou exiger une approbation. Une surcharge ne peut que durcir le catalogue ; elle est figée sur le run (`runs.policy`).
+- **F-11 Exports et métriques** : `report.pdf`, `report.json`, `report.md?download=true` ; `GET /runs/{id}/metrics` (durée, taux de vérification, erreurs d'outils, budget consommé) et indicateurs ajoutés à `/analytics/overview`.
+- **F-12 PR avec confirmation** : agent `remediation` et serveur MCP `changes` qui ne fait que proposer un diff ; refus des workflows CI, des fichiers à secrets et des chemins sensibles. Une personne prépare la PR (instantané + `content_hash`), puis la confirme en citant ce hash ; le serveur crée alors une branche neuve, un commit et une PR brouillon avec un jeton d'écriture distinct. Aucun agent n'a d'outil d'écriture.
+- **F-13 Workflows et équipes** : 5 workflows intégrés (analyse, audit sécurité, architecture, tests, correction) et workflows enregistrés (qui ne peuvent que restreindre les agents) ; équipes avec rôles viewer / member / admin / owner appliqués à toutes les routes.
 
 ## 4. Planning : ajustements proposés
 

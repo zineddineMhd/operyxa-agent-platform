@@ -22,6 +22,7 @@ from operyxa.db.models import (
     utcnow,
 )
 from operyxa.db.session import Database
+from operyxa.gateway.redaction import redact
 
 
 class RunStore:
@@ -82,6 +83,9 @@ class RunStore:
                 )
 
     async def update_step(self, run_id: uuid.UUID, step_key: str, **fields: Any) -> None:
+        for name in ("summary", "error"):
+            if isinstance(fields.get(name), str):
+                fields[name] = redact(fields[name])
         async with self._db.session.begin() as s:
             await s.execute(
                 update(RunStep)
@@ -213,6 +217,15 @@ class RunStore:
                 delete(Finding).where(Finding.run_id == run_id, Finding.step_key == step_key)
             )
             for draft in drafts:
+                # A model may restate a secret it saw before masking, or guessed: never store it.
+                draft = {
+                    **draft,
+                    **{
+                        k: redact(draft[k])
+                        for k in ("title", "description", "recommendation")
+                        if isinstance(draft.get(k), str)
+                    },
+                }
                 s.add(Finding(run_id=run_id, step_key=step_key, agent=agent, **draft))
 
     async def list_findings(self, run_id: uuid.UUID) -> list[Finding]:

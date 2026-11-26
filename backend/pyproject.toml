@@ -23,6 +23,7 @@ dependencies = [
     "mcp>=2.0",
     "cryptography>=50.0.2",
     "langchain-openai>=1.8.0",
+    "fpdf2>=2.9.0",
 ]
 
 [dependency-groups]

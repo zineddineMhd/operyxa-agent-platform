@@ -4,13 +4,14 @@ import { Page } from "../components/AppShell";
 import { Button, ErrorNote, Eyebrow, KeyValue, Panel, Skeleton } from "../components/ui";
 import { api } from "../lib/api";
 import { duration, money } from "../lib/format";
+import { TeamsPanel, WorkflowsPanel } from "../components/TeamsPanel";
 
 export function Settings() {
   const { user, signOut } = useAuth();
   const config = useQuery({ queryKey: ["config"], queryFn: api.config });
   const c = config.data;
   return (
-    <Page crumb="Settings" title="settings." subtitle="Model, run limits, account and security posture.">
+    <Page crumb="Settings" title="settings." subtitle="Model, run limits, teams, workflows and security posture.">
       {config.isError && <div className="mb-6"><ErrorNote error={config.error} retry={() => void config.refetch()} /></div>}
       <div className="grid items-start gap-7 lg:grid-cols-2">
         <Panel className="p-6">
@@ -57,8 +58,11 @@ export function Settings() {
             <KeyValue label="Secrets in tool output" mono={false}>Redacted before storage and model</KeyValue>
             <KeyValue label="Sensitive files" mono={false}>Never read</KeyValue>
             <KeyValue label="Tool calls" mono={false}>Audited</KeyValue>
+            <KeyValue label="Pull requests" mono={false}>{c?.pull_requests?.enabled ? "Only after your confirmation" : "Disabled"}</KeyValue>
           </dl>
         </Panel>
+        <TeamsPanel />
+        <WorkflowsPanel />
       </div>
     </Page>
   );
