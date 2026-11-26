@@ -81,10 +81,15 @@ class Settings(BaseSettings):
     mcp_github_url: str = ""
     mcp_analysis_url: str = ""
     mcp_test_runner_url: str = ""
+    mcp_changes_url: str = ""
     # Vulnerability database. Only package names and versions are sent. Empty URL disables it.
     osv_api_url: str = "https://api.osv.dev"
     github_api_url: str = "https://api.github.com"
     github_token: str = ""
+
+    # Pull requests from fix proposals (F-12): created only after a person confirms, with the
+    # project's separate write token. Off disables the endpoints and the remediation agent.
+    pull_requests_enabled: bool = True
 
     # Worker
     worker_poll_seconds: float = 1.0

@@ -7,6 +7,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from operyxa.config import Settings
 from operyxa.gateway.providers import MCPProvider, ToolProvider
 from operyxa.mcp_servers.analysis_server import build_analysis_server
+from operyxa.mcp_servers.changes_server import build_changes_server
 from operyxa.mcp_servers.github_client import GitHubClient
 from operyxa.mcp_servers.github_server import build_github_server
 from operyxa.mcp_servers.osv import OSVClient
@@ -49,6 +50,7 @@ def build_providers(
     providers: list[ToolProvider] = [
         MCPProvider("github", settings.mcp_github_url or build_github_server(client)),
         MCPProvider("analysis", settings.mcp_analysis_url or build_analysis_server(client, osv)),
+        MCPProvider("changes", settings.mcp_changes_url or build_changes_server(client)),
     ]
     if settings.test_runner_enabled:
         runner = settings.mcp_test_runner_url or build_test_runner(settings, client, sandbox)

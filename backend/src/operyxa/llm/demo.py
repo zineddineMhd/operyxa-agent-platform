@@ -53,28 +53,7 @@ class DemoLLM:
     ) -> AIMessage:
         names = {t["function"]["name"] for t in tools}
         if "submit_plan" in names:
-            calls = [
-                _call(
-                    "submit_plan",
-                    {
-                        "steps": self._testing_step(messages)
-                        + [
-                            {
-                                "id": "repo_overview",
-                                "agent": "repository",
-                                "depends_on": [],
-                                "action": "Map the repository structure and review the five latest commits.",
-                            },
-                            {
-                                "id": "security_review",
-                                "agent": "security",
-                                "depends_on": [],
-                                "action": "Scan dependency manifests and configuration for weaknesses.",
-                            },
-                        ]
-                    },
-                )
-            ]
+            calls = [_call("submit_plan", {"steps": self._plan(messages)})]
         elif "submit_report" in names:
             calls = [_call("submit_report", self._report(str(messages[-1].content)))]
         else:
@@ -87,6 +66,8 @@ class DemoLLM:
             seen_tool_output = any(isinstance(m, ToolMessage) for m in messages)
             if "test_runner__run_test_profile" in names and tool_choice != "submit_step_result":
                 calls = self._test(results, seen_tool_output, messages)
+            elif "changes__propose_file_change" in names and tool_choice != "submit_step_result":
+                calls = self._remediate(results, seen_tool_output)
             elif not seen_tool_output and tool_choice != "submit_step_result":
                 calls = self._explore(names)
             else:
@@ -100,21 +81,84 @@ class DemoLLM:
         usage["total_tokens"] = usage["input_tokens"] + usage["output_tokens"]
         return AIMessage(content="", tool_calls=calls, usage_metadata=usage)
 
+    @classmethod
+    def _plan(cls, messages: list[BaseMessage]) -> list[dict[str, Any]]:
+        steps = cls._optional_steps(messages) + [
+            {
+                "id": "repo_overview",
+                "agent": "repository",
+                "depends_on": [],
+                "action": "Map the repository structure and review the five latest commits.",
+            },
+            {
+                "id": "security_review",
+                "agent": "security",
+                "depends_on": [],
+                "action": "Scan dependency manifests and configuration for weaknesses.",
+            },
+        ]
+        try:
+            available = set(json.loads(str(messages[-1].content)).get("available_agents", []))
+        except (ValueError, AttributeError):
+            available = set()
+        if available:  # a workflow may narrow the agents: plan only with those
+            steps = [s for s in steps if s["agent"] in available]
+            ids = {s["id"] for s in steps}
+            steps = [{**s, "depends_on": [d for d in s["depends_on"] if d in ids]} for s in steps]
+        return steps
+
     @staticmethod
-    def _testing_step(messages: list[BaseMessage]) -> list[dict[str, Any]]:
+    def _optional_steps(messages: list[BaseMessage]) -> list[dict[str, Any]]:
         try:
             request = json.loads(str(messages[-1].content))
         except ValueError:
             return []
-        if "testing" not in request.get("available_agents", []):
+        available = request.get("available_agents", [])
+        steps = []
+        if "testing" in available:
+            steps.append(
+                {
+                    "id": "test_suite",
+                    "agent": "testing",
+                    "depends_on": [],
+                    "action": "Run the repository's test suite with the applicable test profile.",
+                }
+            )
+        if "remediation" in available:
+            steps.append(
+                {
+                    "id": "fix_proposals",
+                    "agent": "remediation",
+                    "depends_on": ["repo_overview", "security_review"],
+                    "action": "Propose a pinned base image for the Dockerfile if it uses latest.",
+                }
+            )
+        return steps
+
+    @staticmethod
+    def _remediate(results: list[tuple[str, str, str]], seen_tool_output: bool) -> list[dict]:
+        """Read the Dockerfile, propose a pinned base image once, then conclude."""
+        if not seen_tool_output:
+            return [_call("github__get_file", {"path": "Dockerfile"})]
+        tools = {tool for _, tool, _ in results}
+        if tools != {"github.get_file"}:
+            return []
+        try:
+            content = json.loads(results[0][2])["content"]
+        except (ValueError, KeyError, TypeError):
+            return []
+        fixed = re.sub(r"^(FROM\s+[\w./-]+):latest\b", r"\1:3.12-slim", content, flags=re.M)
+        if fixed == content:
             return []
         return [
-            {
-                "id": "test_suite",
-                "agent": "testing",
-                "depends_on": [],
-                "action": "Run the repository's test suite with the applicable test profile.",
-            }
+            _call(
+                "changes__propose_file_change",
+                {
+                    "path": "Dockerfile",
+                    "new_content": fixed + ("" if fixed.endswith("\n") else "\n"),
+                    "rationale": "Pin the base image instead of the moving latest tag.",
+                },
+            )
         ]
 
     @staticmethod
@@ -160,6 +204,8 @@ class DemoLLM:
                 continue
             if tool == "github.list_tree":
                 notes.append(f"{data.get('total', 0)} entries in the tree")
+            if tool == "changes.propose_file_change":
+                notes.append(f"proposed a change to {data.get('path')}")
             if tool == "github.list_commits" and data.get("commits"):
                 notes.append(f"{len(data['commits'])} recent commits reviewed")
             if tool == "test_runner.run_test_profile":

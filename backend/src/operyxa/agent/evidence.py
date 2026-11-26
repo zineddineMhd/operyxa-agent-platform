@@ -10,6 +10,7 @@ import re
 from typing import Any
 
 from operyxa.db.models import ToolCall
+from operyxa.gateway.redaction import MARKER, redact
 
 _WS = re.compile(r"\s+")
 
@@ -68,8 +69,36 @@ def _line_in(text: str, quote: str) -> int | None:
     return 1
 
 
+def _canon(text: str) -> str:
+    """All redaction markers look alike: the model cannot know which detector fired."""
+    return MARKER.sub("[REDACTED]", text)
+
+
+def _canon_tree(node: Any) -> Any:
+    if isinstance(node, str):
+        return _canon(node)
+    if isinstance(node, list):
+        return [_canon_tree(v) for v in node]
+    if isinstance(node, dict):
+        return {k: _canon_tree(v) for k, v in node.items()}
+    return node
+
+
+def _find(text: str, quote: str) -> dict[str, Any] | None:
+    try:
+        location = _locate(json.loads(text), quote)
+    except ValueError:
+        location = None
+    if location is None and _norm(quote) in _norm(text):
+        location = {"path": None, "start_line": None, "end_line": None}
+    return location
+
+
 def verify_reference(ref: dict[str, Any], calls: dict[str, ToolCall]) -> dict[str, Any]:
-    evidence_id, quote = str(ref.get("evidence_id", "")), str(ref.get("quote", ""))
+    evidence_id = str(ref.get("evidence_id", ""))
+    # The stored quote never carries a secret, even one the model guessed or recalled.
+    raw_quote = str(ref.get("quote", ""))
+    quote = redact(raw_quote)
     out: dict[str, Any] = {
         "evidence_id": evidence_id,
         "quote": quote,
@@ -86,14 +115,20 @@ def verify_reference(ref: dict[str, Any], calls: dict[str, ToolCall]) -> dict[st
     text = call.result_text or ""
     if len(_norm(quote)) < 3:
         return {**out, "reason": "quote too short"}
-    try:
-        location = _locate(json.loads(text), quote)
-    except ValueError:
-        location = None
+    location = _find(text, quote)
+    if location is None and MARKER.search(text):
+        # The model quoted a masked line with its (guessed) original value: compare both sides
+        # with the secrets masked, so the claim is checked against what the model really saw.
+        canon_quote = _canon(quote)
+        try:
+            canon_text = json.dumps(_canon_tree(json.loads(text)), ensure_ascii=False)
+        except ValueError:
+            canon_text = _canon(text)
+        location = _find(canon_text, canon_quote)
+        if location is not None:
+            out["quote"], out["quote_redacted"] = canon_quote, True
     if location is None:
-        if _norm(quote) not in _norm(text):
-            return {**out, "reason": "quote not found in tool output"}
-        location = {"path": call.args.get("path"), "start_line": None, "end_line": None}
+        return {**out, "reason": "quote not found in tool output"}
     if location.get("path") is None:
         location["path"] = call.args.get("path")
     return {**out, **location, "verified": True}

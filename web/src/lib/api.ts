@@ -4,11 +4,16 @@ export type RunStatus = "pending" | "running" | "waiting_approval" | "completed"
 export type StepStatus = "pending" | "running" | "completed" | "failed" | "skipped";
 
 export interface User { id: string; email: string; role: string; created_at: string }
-export interface Project { id: string; name: string; repo_owner: string; repo_name: string; created_at: string; has_token: boolean }
+export interface Project {
+  id: string; name: string; repo_owner: string; repo_name: string; created_at: string; has_token: boolean;
+  has_write_token: boolean; team_id: string | null; role?: string | null;
+}
 export interface Limits { max_llm_calls: number; max_tool_calls: number; max_seconds: number; max_cost_usd: number }
 export interface PlanStep { id: string; agent: string; action: string; depends_on: string[] }
 export interface Run {
-  id: string; project_id: string; objective: string; workflow_type: string; status: RunStatus;
+  id: string; project_id: string; objective: string; workflow_type: string; workflow_id?: string | null;
+  options?: { run_tests?: boolean; propose_fixes?: boolean; agents?: string[] }; policy?: Record<string, string>;
+  status: RunStatus;
   stop_reason: string | null; error: { code: string; message: string } | null;
   commit_sha: string | null; plan: { steps: PlanStep[] } | null; limits: Limits;
   created_at: string; started_at: string | null; completed_at: string | null;
@@ -55,10 +60,40 @@ export interface Overview {
   runs_total: number; runs_this_week: number; runs_by_status: Partial<Record<RunStatus, number>>;
   success_rate: number | null; pending_approvals: number; estimated_cost_usd: number;
   avg_run_cost_usd: number | null; llm_calls: number; llm_provider: string;
+  avg_duration_seconds: number | null; verification_rate: number | null; tool_error_rate: number | null;
+  verified_by_severity: Record<string, number>; runs_by_workflow: Record<string, number>;
+  stop_reasons: Record<string, number>; duplicates_merged: number; tool_rejections: number;
+}
+export interface ToolMetric { tool: string; calls: number; failed: number; rejected: number; avg_ms: number }
+export interface RunMetrics {
+  duration_seconds: number | null; verification_rate: number | null; tool_error_rate: number | null;
+  verified_by_severity: Record<string, number>; findings_by_status: Record<string, number>; tools: ToolMetric[];
+  budget_used: Record<string, number | null>; approvals_by_status: Record<string, number>;
+}
+export interface WorkflowTemplate {
+  key?: string; id?: string; name: string; description: string; agents: string[];
+  objective_template: string; options: { run_tests?: boolean; propose_fixes?: boolean }; builtin?: boolean;
+  base_type?: string; team_id?: string | null;
+}
+export interface McpServer {
+  name: string; enabled: boolean; transport: string; host: string | null; trusted_tools: string[];
+  status?: "ok" | "unreachable" | "disabled"; error?: string; available_tools?: string[];
+  missing_tools?: string[]; ignored_tools?: string[];
+}
+export interface PolicyTool extends CatalogTool { mode: "default" | "approval_required" | "disabled"; effective: string; configurable: boolean }
+export interface TeamMember { user_id: string; email: string; role: string }
+export interface Team { id: string; name: string; created_at: string; role: string | null; members: TeamMember[] }
+export interface Change { evidence_id: string; step: string; path: string; change_type: string; rationale: string; diff: string }
+export interface PullRequestProposal {
+  id: string; run_id: string; status: "awaiting_confirmation" | "creating" | "created" | "failed" | "cancelled";
+  title: string; body: string; branch: string; base_sha: string; diff: string; content_hash: string;
+  files: { path: string; change_type: string; rationale: string }[];
+  pr_number: number | null; pr_url: string | null; error: string | null; created_at: string;
 }
 export interface PlatformConfig {
   llm_provider: string; llm_model: string; llm_fallback_model: string | null;
   private_repositories: boolean; read_only: boolean; limits: Limits;
+  pull_requests?: { enabled: boolean; confirmation_required: boolean }; workflows?: WorkflowTemplate[];
   test_runner: { enabled: boolean; install_network: boolean; timeout_seconds: number; approval_required: boolean };
 }
 export interface CatalogTool { server: string; tool: string; risk: string; policy: string; agents: string[]; access: string }
@@ -109,6 +144,23 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 const post = <T,>(path: string, body?: unknown, headers?: Record<string, string>) =>
   request<T>(path, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body), headers });
+const send = <T,>(method: string, path: string, body?: unknown) =>
+  request<T>(path, { method, body: body === undefined ? undefined : JSON.stringify(body) });
+
+/** Authenticated file download (PDF, Markdown, JSON exports). */
+export async function download(path: string, filename: string): Promise<void> {
+  const response = await fetch(BASE + path, { headers: authHeaders() });
+  if (!response.ok) throw new ApiError(response.status, "DOWNLOAD_FAILED", `The server answered ${response.status}.`);
+  const url = URL.createObjectURL(await response.blob());
+  const link = Object.assign(document.createElement("a"), { href: url, download: filename });
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+export interface StartRunInput {
+  project_id: string; objective?: string; workflow_type?: string; workflow_id?: string;
+  run_tests?: boolean; propose_fixes?: boolean;
+}
 
 export const api = {
   register: (email: string, password: string) => post<User>("/auth/register", { email, password }),
@@ -123,9 +175,11 @@ export const api = {
     for (const [key, value] of Object.entries(params)) if (value !== undefined && value !== "") query.set(key, String(value));
     return request<Page<Run>>(`/runs?${query}`);
   },
-  startRun: (project_id: string, objective: string, run_tests = false) =>
-    post<{ run_id: string; status: RunStatus }>("/runs", { project_id, objective, options: { run_tests } },
-      { "Idempotency-Key": crypto.randomUUID() }),
+  startRun: ({ project_id, objective, workflow_type, workflow_id, run_tests = false, propose_fixes = false }: StartRunInput) =>
+    post<{ run_id: string; status: RunStatus }>("/runs", {
+      project_id, ...(objective ? { objective } : {}), ...(workflow_id ? { workflow_id } : { workflow_type }),
+      options: { run_tests, propose_fixes },
+    }, { "Idempotency-Key": crypto.randomUUID() }),
   run: (id: string) => request<RunDetail>(`/runs/${id}`),
   steps: (id: string) => request<Step[]>(`/runs/${id}/steps`),
   cancelRun: (id: string) => post<Run>(`/runs/${id}/cancel`),
@@ -139,4 +193,25 @@ export const api = {
   overview: () => request<Overview>("/analytics/overview"),
   config: () => request<PlatformConfig>("/platform/config"),
   tools: () => request<{ tools: CatalogTool[] }>("/mcp/tools"),
+  servers: (probe = false) => request<{ servers: McpServer[] }>(`/mcp/servers${probe ? "?probe=true" : ""}`),
+  policies: (projectId: string) => request<{ tools: PolicyTool[] }>(`/projects/${projectId}/tool-policies`),
+  setPolicy: (projectId: string, tool: string, mode: string) =>
+    send<{ tools: PolicyTool[] }>("PUT", `/projects/${projectId}/tool-policies`, { tool, mode }),
+  updateProject: (projectId: string, body: { name?: string; github_token?: string; github_write_token?: string; team_id?: string; clear_team?: boolean }) =>
+    send<Project>("PATCH", `/projects/${projectId}`, body),
+  runMetrics: (id: string) => request<RunMetrics>(`/runs/${id}/metrics`),
+  workflows: () => request<{ builtin: WorkflowTemplate[]; saved: WorkflowTemplate[] }>("/workflows"),
+  createWorkflow: (body: { name: string; base_type: string; objective_template: string; description?: string; agents?: string[]; run_tests?: boolean; propose_fixes?: boolean; team_id?: string }) =>
+    post<WorkflowTemplate>("/workflows", body),
+  deleteWorkflow: (id: string) => send<void>("DELETE", `/workflows/${id}`),
+  teams: () => request<Team[]>("/teams"),
+  createTeam: (name: string) => post<Team>("/teams", { name }),
+  addMember: (teamId: string, email: string, role: string) => post<Team>(`/teams/${teamId}/members`, { email, role }),
+  removeMember: (teamId: string, userId: string) => send<Team>("DELETE", `/teams/${teamId}/members/${userId}`),
+  changes: (runId: string) => request<{ changes: Change[] }>(`/runs/${runId}/changes`),
+  pullRequests: (runId: string) => request<PullRequestProposal[]>(`/runs/${runId}/pull-requests`),
+  preparePullRequest: (runId: string, body: { title?: string; include_report?: boolean; evidence_ids?: string[] }) =>
+    post<PullRequestProposal>(`/runs/${runId}/pull-requests`, body),
+  confirmPullRequest: (id: string, content_hash: string) => post<PullRequestProposal>(`/pull-requests/${id}/confirm`, { content_hash }),
+  cancelPullRequest: (id: string) => post<PullRequestProposal>(`/pull-requests/${id}/cancel`),
 };

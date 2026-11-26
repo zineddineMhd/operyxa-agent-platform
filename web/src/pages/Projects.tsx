@@ -2,8 +2,49 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
 import { Page } from "../components/AppShell";
 import { Button, Empty, ErrorNote, Eyebrow, Field, INPUT, Panel, Skeleton, Tag } from "../components/ui";
-import { api } from "../lib/api";
+import { api, type Project } from "../lib/api";
 import { dayTime } from "../lib/format";
+
+// Write token and team sharing (F-12, F-13). Tokens are write-only: they are never shown back.
+function ProjectSettings({ project, onDone }: { project: Project; onDone: () => void }) {
+  const client = useQueryClient();
+  const teams = useQuery({ queryKey: ["teams"], queryFn: api.teams });
+  const [writeToken, setWriteToken] = useState("");
+  const [team, setTeam] = useState(project.team_id ?? "");
+  const save = useMutation({
+    mutationFn: () => api.updateProject(project.id, {
+      ...(writeToken.trim() ? { github_write_token: writeToken.trim() } : {}),
+      ...(team ? { team_id: team } : { clear_team: !!project.team_id }),
+    }),
+    onSuccess: () => { setWriteToken(""); void client.invalidateQueries({ queryKey: ["projects"] }); onDone(); },
+  });
+  const clearToken = useMutation({
+    mutationFn: () => api.updateProject(project.id, { github_write_token: "" }),
+    onSuccess: () => void client.invalidateQueries({ queryKey: ["projects"] }),
+  });
+  const manageable = (teams.data ?? []).filter((t) => t.role === "owner" || t.role === "admin");
+  return (
+    <form className="mt-4 basis-full space-y-3 rounded-[5px] border border-line p-4" onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
+      <Field label="Share with a team" hint="Team members get access according to their team role.">
+        <select className={INPUT} value={team} onChange={(e) => setTeam(e.target.value)}>
+          <option value="">Not shared</option>
+          {manageable.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+        </select>
+      </Field>
+      <Field label={project.has_write_token ? "Write token — set (enter a new one to replace it)" : "Write token — for pull requests"}
+        hint="Fine-grained token with Contents and Pull requests: write, on this repository only. Used only when you confirm a pull request.">
+        <input className={`${INPUT} font-mono`} type="password" autoComplete="off" maxLength={400} placeholder="github_pat_…"
+          value={writeToken} onChange={(e) => setWriteToken(e.target.value)} />
+      </Field>
+      {(save.isError || clearToken.isError) && <ErrorNote error={save.error ?? clearToken.error} />}
+      <div className="flex flex-wrap gap-2">
+        <Button type="submit" disabled={save.isPending}>Save</Button>
+        {project.has_write_token && <Button variant="danger" onClick={() => clearToken.mutate()}>Remove write token</Button>}
+        <Button variant="secondary" onClick={onDone}>Close</Button>
+      </div>
+    </form>
+  );
+}
 
 export function Projects() {
   const client = useQueryClient();
@@ -11,6 +52,7 @@ export function Projects() {
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [token, setToken] = useState("");
+  const [editing, setEditing] = useState<string | null>(null);
   const config = useQuery({ queryKey: ["config"], queryFn: api.config, staleTime: 60_000 });
   const create = useMutation({
     mutationFn: () => api.createProject(name.trim() || url.trim().split("/").filter(Boolean).pop()!.replace(/\.git$/, ""), url.trim(), token.trim() || undefined),
@@ -41,7 +83,14 @@ export function Projects() {
                   <p className="mt-1.5 font-mono text-xs text-muted">{p.repo_owner}/{p.repo_name} · added {dayTime(p.created_at)}</p>
                 </div>
                 {p.has_token && <Tag>Private · token</Tag>}
-                <Tag tone="teal">Read-only</Tag>
+                {p.team_id && <Tag tone="violet">Team</Tag>}
+                {p.has_write_token ? <Tag tone="amber">PRs · confirmation</Tag> : <Tag tone="teal">Read-only</Tag>}
+                {(p.role ?? "owner") !== "viewer" && (
+                  <button type="button" className="text-sm text-violet-soft underline underline-offset-4" onClick={() => setEditing(editing === p.id ? null : p.id)}>
+                    settings
+                  </button>
+                )}
+                {editing === p.id && <ProjectSettings project={p} onDone={() => setEditing(null)} />}
               </li>
             ))}
           </ul>

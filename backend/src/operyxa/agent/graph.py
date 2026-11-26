@@ -10,7 +10,7 @@ the dependency graph, so no LLM call (and no hallucinated routing) is spent on i
 import json
 import logging
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Annotated, Any, TypedDict
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -79,6 +79,8 @@ class RunDeps:
     # Agents the planner may use for this run: the base set, plus "testing" when the run asked
     # for tests and a sandboxed test runner is connected.
     agents: frozenset[str] = BASE_AGENTS
+    # Project tool-policy overrides frozen on the run (F-10).
+    policy: dict[str, str] = field(default_factory=dict)
 
 
 STOPPING = (BudgetExceeded, RunCancelled, LLMUnavailable)
@@ -205,7 +207,7 @@ def build_graph(deps: RunDeps, checkpointer: Any):
         key, agent = step["id"], step["agent"]
         await store.update_step(run_id, key, status="running", started_at=utcnow(), error=None)
         await store.emit(run_id, "agent.started", {"step": key, "agent": agent})
-        ctx = CallContext(run_id, key, agent, deps.scope, deps.budget, deps.actor_id)
+        ctx = CallContext(run_id, key, agent, deps.scope, deps.budget, deps.actor_id, deps.policy)
         update: dict[str, Any] = {}
         try:
             result = await run_step(

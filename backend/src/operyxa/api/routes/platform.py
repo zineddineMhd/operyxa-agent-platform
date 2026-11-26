@@ -1,11 +1,16 @@
+import asyncio
 from datetime import timedelta
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter
 from sqlalchemy import func, select
 
-from operyxa.api.deps import AppSettings, CurrentUser, Db
-from operyxa.db.models import Approval, LLMUsage, Project, Run, utcnow
-from operyxa.gateway.catalog import describe_catalog
+from operyxa.agent.metrics import platform_metrics
+from operyxa.agent.workflows import describe_builtin
+from operyxa.api.deps import AppSettings, CurrentUser, Db, accessible_projects
+from operyxa.bootstrap import build_providers
+from operyxa.db.models import Approval, LLMUsage, Run, utcnow
+from operyxa.gateway.catalog import CATALOG, describe_catalog
 from operyxa.llm.factory import model_names
 
 router = APIRouter(tags=["platform"])
@@ -17,13 +22,61 @@ async def list_tools(user: CurrentUser) -> dict:
     return {"tools": describe_catalog()}
 
 
+def _servers(settings) -> list[dict]:
+    remote = {
+        "github": settings.mcp_github_url,
+        "analysis": settings.mcp_analysis_url,
+        "changes": settings.mcp_changes_url,
+        "test_runner": settings.mcp_test_runner_url,
+    }
+    out = []
+    for name, tools in CATALOG.items():
+        enabled = name != "test_runner" or settings.test_runner_enabled
+        if name == "changes":
+            enabled = settings.pull_requests_enabled
+        url = remote.get(name) or ""
+        out.append(
+            {
+                "name": name,
+                "enabled": enabled,
+                "transport": "streamable-http" if url else "in-process",
+                # Only the host is shown: a URL may carry credentials.
+                "host": urlsplit(url).hostname if url else None,
+                "trusted_tools": sorted(f"{name}.{t}" for t in tools),
+            }
+        )
+    return out
+
+
+@router.get("/mcp/servers")
+async def list_servers(user: CurrentUser, settings: AppSettings, probe: bool = False) -> dict:
+    """MCP Hub (F-10): connected servers. With `probe`, each server is asked for its tools; the
+    tools it advertises outside the trusted catalog are listed as ignored."""
+    servers = _servers(settings)
+    if probe:
+        providers = {p.name: p for p in build_providers(settings)}
+        for server in servers:
+            provider = providers.get(server["name"])
+            if provider is None:
+                server["status"] = "disabled"
+                continue
+            try:
+                async with asyncio.timeout(10):
+                    advertised = {f"{server['name']}.{t.name}" for t in await provider.list_tools()}
+            except Exception as exc:  # unreachable server: shown, not raised
+                server["status"], server["error"] = "unreachable", type(exc).__name__
+                continue
+            trusted = set(server["trusted_tools"])
+            server["status"] = "ok"
+            server["available_tools"] = sorted(advertised & trusted)
+            server["missing_tools"] = sorted(trusted - advertised)
+            server["ignored_tools"] = sorted(advertised - trusted)
+    return {"servers": servers}
+
+
 @router.get("/analytics/overview")
 async def overview(db: Db, user: CurrentUser, settings: AppSettings) -> dict:
-    mine = (
-        select(Run.id)
-        .join(Project, Project.id == Run.project_id)
-        .where(Project.owner_id == user.id)
-    )
+    mine = select(Run.id).where(Run.project_id.in_(accessible_projects(user)))
     async with db.session() as s:
         by_status = dict(
             (
@@ -63,6 +116,7 @@ async def overview(db: Db, user: CurrentUser, settings: AppSettings) -> dict:
         "avg_run_cost_usd": float(cost) / total if total else None,
         "llm_calls": int(calls),
         "llm_provider": settings.llm_provider,
+        **await platform_metrics(db, mine),
     }
 
 
@@ -76,6 +130,12 @@ async def platform_config(user: CurrentUser, settings: AppSettings) -> dict:
         "llm_fallback_model": models[1] if len(models) > 1 else None,
         "private_repositories": bool(settings.secrets_key),
         "read_only": True,
+        # Agents never write. A pull request is created only after a person confirms it.
+        "pull_requests": {
+            "enabled": settings.pull_requests_enabled,
+            "confirmation_required": True,
+        },
+        "workflows": describe_builtin(),
         "test_runner": {
             "enabled": settings.test_runner_enabled,
             "install_network": settings.test_runner_install_network,

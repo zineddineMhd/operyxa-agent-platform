@@ -38,6 +38,14 @@ export function Overview() {
     { label: "Pending approvals", value: o ? String(o.pending_approvals).padStart(2, "0") : null,
       note: o?.pending_approvals ? "Require attention" : "Nothing waiting", tone: o?.pending_approvals ? "text-amber" : "" },
     { label: "Avg. run cost", value: o ? (o.avg_run_cost_usd === null ? "—" : money(o.avg_run_cost_usd)) : null, note: "Estimates only" },
+    { label: "Claims verified", value: o ? percent(o.verification_rate ?? null) : null,
+      note: o ? `${o.duplicates_merged ?? 0} duplicates merged` : "" },
+    { label: "Avg. run time", value: o ? (o.avg_duration_seconds == null ? "—" : `${Math.round(o.avg_duration_seconds)}s`) : null,
+      note: "Finished runs" },
+    { label: "Tool errors", value: o ? percent(o.tool_error_rate ?? null) : null,
+      note: o ? `${o.tool_rejections ?? 0} calls refused by policy` : "" },
+    { label: "Verified findings", value: o ? String(Object.values(o.verified_by_severity ?? {}).reduce((a, b) => a + b, 0)) : null,
+      note: o ? Object.entries(o.verified_by_severity ?? {}).map(([k, n]) => `${n} ${k}`).join(" · ") || "none yet" : "" },
   ];
   return (
     <Page crumb="Overview" title={`${greeting()}, developer.`} subtitle="Your projects, agent runs and decisions in one place.">

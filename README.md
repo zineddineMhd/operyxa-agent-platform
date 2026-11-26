@@ -102,6 +102,14 @@ possible avec gVisor (`TEST_RUNNER_DOCKER_RUNTIME=runsc`). L'installation avec r
 code d'installation du dépôt (par exemple `setup.py`) : pour s'en passer, fournir des images avec
 les dépendances préinstallées (`TEST_RUNNER_IMAGES`) et mettre `TEST_RUNNER_INSTALL_NETWORK=false`.
 
+## Fonctions V1/V2
+
+- **Workflows** (`GET /api/v1/workflows`) : analyse, audit sécurité, revue d'architecture, tests, correction ; workflows enregistrés par utilisateur ou équipe.
+- **Équipes** (`/api/v1/teams`) : un projet partagé avec une équipe est accessible selon le rôle (viewer : lecture ; member : lancer, approuver ; admin : gérer jetons, politiques, PR).
+- **MCP Hub** : `GET /api/v1/mcp/servers?probe=true`, politiques d'outils par projet (`/api/v1/projects/{id}/tool-policies`).
+- **Exports** : `report.pdf`, `report.json`, `report.md` ; métriques par run (`/runs/{id}/metrics`).
+- **Pull requests** : option « Propose fixes » ; préparer (`POST /runs/{id}/pull-requests`) puis confirmer (`POST /pull-requests/{id}/confirm` avec le `content_hash`). Nécessite un jeton d'écriture distinct sur le projet (Contents + Pull requests : write). `PULL_REQUESTS_ENABLED=false` désactive tout.
+
 ## Tests
 
 ```bash
