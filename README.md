@@ -1,11 +1,56 @@
-# Operyxa — plateforme d'orchestration d'agents IA
+<div align="center">
 
-Plan. Execute. Verify. Un utilisateur confie une mission d'analyse d'un dépôt GitHub ; des
-agents en lecture seule l'exécutent sous contrôle serveur et produisent un rapport dont chaque
-constat renvoie à une preuve vérifiée.
+# Operyxa
 
-État : **MVP lecture seule**, plus l'exécution des tests en sandbox (option, avec approbation) — backend (API, worker, agents, passerelle MCP) et interface web (`web/`).
-Analyse du cahier des charges et décisions : [docs/analyse-cahier-des-charges.md](docs/analyse-cahier-des-charges.md).
+**Des agents IA qui analysent un dépôt GitHub, et dont chaque conclusion renvoie à une preuve vérifiée.**
+
+Plan. Execute. Verify.
+
+![Tests](https://img.shields.io/badge/tests-94%20réussis-2ea44f)
+![Python](https://img.shields.io/badge/Python-3.12-3776AB)
+![React](https://img.shields.io/badge/React-19-61DAFB)
+![Licence](https://img.shields.io/badge/licence-MIT-blue)
+
+![Démo d'Operyxa](docs/images/demo.gif)
+
+</div>
+
+## Le principe
+
+Un utilisateur confie une mission à la plateforme (« audite les dépendances et la CI de ce
+dépôt »). Un planificateur découpe la mission en étapes, des agents spécialisés les exécutent en
+parallèle, et un vérificateur **déterministe** contrôle chaque constat avant qu'il n'entre dans le
+rapport : la citation doit exister mot pour mot dans la sortie de l'outil, sinon le constat est
+écarté. Le modèle ne fournit jamais lui-même un numéro de ligne.
+
+- **Lecture seule par défaut** : les agents n'ont aucun outil d'écriture ; toute action à risque
+  (exécution des tests, pull request) attend une approbation humaine.
+- **Une passerelle unique** entre les agents et les outils MCP : catalogue de confiance, politique,
+  validation de schéma, périmètre injecté par le serveur, budgets, masquage des secrets, audit.
+- **Tout est visible en direct** : plan sous forme de graphe, chronologie SSE, chaque appel d'outil
+  et sa preuve s'ouvrent en un clic.
+- **Fonctionne sans clé** grâce au modèle `demo` ; NVIDIA NIM ou Gemini pour une vraie analyse,
+  avec bascule automatique de l'un à l'autre.
+
+## Captures d'écran
+
+| | |
+|---|---|
+| ![Accueil](docs/images/01-accueil.png) | ![Vue d'ensemble](docs/images/02-vue-ensemble.png) |
+| Page d'accueil | Vue d'ensemble : indicateurs et lancement d'une mission |
+| ![Studio en direct](docs/images/05-studio-en-direct.png) | ![Studio terminé](docs/images/06-studio-termine.png) |
+| Agent Studio pendant l'exécution | Plan exécuté, budget consommé |
+| ![Trace des outils](docs/images/07-trace-outils.png) | ![Preuve](docs/images/08-preuve.png) |
+| Trace : chaque appel, sa décision de politique et sa durée | Une preuve ouverte (sortie d'outil stockée, secrets masqués) |
+| ![Rapport](docs/images/09-rapport.png) | ![MCP Hub](docs/images/10-passerelle-mcp.png) |
+| Rapport : constats vérifiés, export PDF, Markdown, JSON | MCP Hub : serveurs, outils et permissions |
+
+Captures prises avec le modèle `demo` sur ce dépôt lui-même. Rapport détaillé du projet :
+[docs/rapport-operyxa.pdf](docs/rapport-operyxa.pdf).
+
+État : **MVP lecture seule** et exigences V1/V2 (tests en sandbox avec approbation, MCP Hub,
+exports, pull requests avec confirmation, workflows et équipes). Analyse du cahier des charges et
+décisions : [docs/analyse-cahier-des-charges.md](docs/analyse-cahier-des-charges.md).
 
 ## Architecture
 
@@ -162,3 +207,7 @@ palette de commandes `Ctrl K`.
 Toutes les données affichées viennent de l'API. Ce que le backend ne fait pas encore est indiqué
 comme tel : Test Runner « Not enabled » tant que le serveur ne l'active pas, bouton « Cancel run »
 à la place de « Pause run ».
+
+## Licence
+
+[MIT](LICENSE) © 2026 Zineddine Mohammedi
