@@ -92,6 +92,14 @@ Windows (le pilote PostgreSQL asynchrone n'accepte pas la boucle par défaut de 
 | `gemini` | `GEMINI_API_KEY`, `GEMINI_MODEL`, `GEMINI_FALLBACK_MODEL` | Palier gratuit : 20 requêtes/jour sur `gemini-3.8-flash`, soit environ un run. Régler `LLM_REQUESTS_PER_MINUTE=5` |
 | `openai_compatible` | `LLM_API_KEY`, `LLM_MODEL`, `LLM_BASE_URL` | NVIDIA NIM par défaut ; tout service compatible OpenAI avec appel d'outils. Testé avec `nvidia/nemotron-3-ultra-550b-a55b` (secours : `nvidia/nemotron-3.5-lightning-30b-a3b`) |
 
+Secours entre fournisseurs : les modèles du fournisseur choisi sont essayés d'abord, puis ceux de
+l'autre fournisseur si sa clé est remplie (`LLM_CROSS_PROVIDER_FALLBACK=true`, par défaut). Par
+exemple NVIDIA en principal et Gemini en secours : `LLM_PROVIDER=openai_compatible`, `LLM_API_KEY`
+et `GEMINI_API_KEY`. On bascule après les nouvelles tentatives sur une surcharge ou un quota, et
+tout de suite sur une requête refusée (clé invalide, modèle inconnu). Le changement peut avoir lieu
+au milieu d'un run ; le modèle qui a répondu est enregistré à chaque appel. `GEMINI_REQUESTS_PER_MINUTE`
+borne Gemini seul (palier gratuit : 5).
+
 Dépôts privés : définir `SECRETS_KEY` sur le serveur, puis saisir un jeton GitHub en lecture
 seule (Contents + Metadata) à la création du projet. Il est chiffré au repos et jamais renvoyé.
 

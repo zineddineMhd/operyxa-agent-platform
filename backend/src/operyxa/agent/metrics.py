@@ -5,7 +5,7 @@ from typing import Any
 from sqlalchemy import Select, func, select
 
 from operyxa.agent.store import RunStore
-from operyxa.db.models import Approval, Finding, Run, ToolCall, aware
+from operyxa.db.models import Approval, Finding, LLMUsage, Run, ToolCall, aware
 from operyxa.db.session import Database
 
 
@@ -81,12 +81,24 @@ async def run_metrics(db: Database, run: Run) -> dict[str, Any]:
     counters = await RunStore(db).counters(run.id)
     breakdown = await _breakdowns(db, select(Run.id).where(Run.id == run.id))
     limits = run.limits or {}
+    async with db.session() as s:
+        models = dict(
+            (
+                await s.execute(
+                    select(LLMUsage.model, func.count(LLMUsage.id))
+                    .where(LLMUsage.run_id == run.id)
+                    .group_by(LLMUsage.model)
+                )
+            ).all()
+        )
     return {
         "run_id": str(run.id),
         "status": run.status,
         "stop_reason": run.stop_reason,
         "duration_seconds": _seconds(run),
         "usage": counters,
+        # Model calls per model: shows when the backup model or provider answered.
+        "models": {name: int(n) for name, n in models.items()},
         "budget_used": {
             k: (counters[c] / limits[k] if limits.get(k) else None)
             for k, c in (

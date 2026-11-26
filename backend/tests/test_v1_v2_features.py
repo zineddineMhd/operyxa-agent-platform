@@ -160,6 +160,7 @@ async def test_report_exports_and_metrics(client, env):
     assert metrics["duration_seconds"] is not None and metrics["usage"]["llm_calls"] >= 4
     assert metrics["verification_rate"] == 1.0 and metrics["verified_by_severity"]
     assert metrics["budget_used"]["max_llm_calls"] > 0
+    assert sum(metrics["models"].values()) == metrics["usage"]["llm_calls"]
     assert {t["tool"] for t in metrics["tools"]} >= {
         "github.get_repo",
         "analysis.scan_dependencies",

@@ -11,7 +11,7 @@ from operyxa.api.deps import AppSettings, CurrentUser, Db, accessible_projects
 from operyxa.bootstrap import build_providers
 from operyxa.db.models import Approval, LLMUsage, Run, utcnow
 from operyxa.gateway.catalog import CATALOG, describe_catalog
-from operyxa.llm.factory import model_names
+from operyxa.llm.factory import model_names, provider_chain
 
 router = APIRouter(tags=["platform"])
 
@@ -127,7 +127,9 @@ async def platform_config(user: CurrentUser, settings: AppSettings) -> dict:
     return {
         "llm_provider": settings.llm_provider,
         "llm_model": models[0] if models else "not configured",
-        "llm_fallback_model": models[1] if len(models) > 1 else None,
+        # Every model tried after the main one, the backup provider's included.
+        "llm_fallback_model": ", ".join(models[1:]) or None,
+        "llm_chain": [{"provider": p, "model": m} for p, m in provider_chain(settings)],
         "private_repositories": bool(settings.secrets_key),
         "read_only": True,
         # Agents never write. A pull request is created only after a person confirms it.

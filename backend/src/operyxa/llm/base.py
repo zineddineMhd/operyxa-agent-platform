@@ -76,10 +76,16 @@ class RateLimiter:
                 await asyncio.sleep(60 - (now - self._stamps[0]) + 0.05)
 
 
+def _provider(client: LLMClient) -> str:
+    return getattr(client, "provider", "default")
+
+
 class ResilientLLM:
     """Retries transient provider failures with backoff, then moves to the next model.
 
     Provider overload (HTTP 503/429) is routine; it must not fail a run on the first error.
+    A rejected request (bad key, unknown model, invalid schema) is not retried on the same
+    provider, but moves on to a model of another provider when one is configured.
     """
 
     def __init__(
@@ -88,12 +94,14 @@ class ResilientLLM:
         max_retries: int,
         base_seconds: float,
         timeout_seconds: float = 90.0,
-        requests_per_minute: int = 0,
+        requests_per_minute: int | list[int] = 0,
         quota_wait_seconds: float = 30.0,
     ):
         self._quota_wait = quota_wait_seconds
         self._clients = clients
-        self._limiters = [RateLimiter(requests_per_minute) for _ in clients]
+        if isinstance(requests_per_minute, int):
+            requests_per_minute = [requests_per_minute] * len(clients)
+        self._limiters = [RateLimiter(n) for n in requests_per_minute]
         self._timeout = timeout_seconds
         self._max_retries = max_retries
         self._base = base_seconds
@@ -106,7 +114,11 @@ class ResilientLLM:
         tool_choice: str | None = None,
     ) -> AIMessage:
         last: Exception | None = None
-        for client, limiter in zip(self._clients, self._limiters, strict=True):
+        skip_provider: str | None = None
+        for index, (client, limiter) in enumerate(zip(self._clients, self._limiters, strict=True)):
+            provider = _provider(client)
+            if provider == skip_provider:
+                continue
             for attempt in range(self._max_retries + 1):
                 await limiter.acquire()
                 try:
@@ -116,7 +128,18 @@ class ResilientLLM:
                     return ai
                 except Exception as exc:  # provider SDKs raise many unrelated types
                     if not _is_transient(exc):
-                        raise  # a rejected request will be rejected again: fail fast
+                        # A rejected request will be rejected again by this provider: fail
+                        # fast, unless another provider is configured after it.
+                        later = {_provider(c) for c in self._clients[index + 1 :]}
+                        if not later - {provider}:
+                            raise
+                        log.warning(
+                            "%s rejected the request, switching provider: %s",
+                            client.model_name,
+                            str(exc)[:200],
+                        )
+                        last, skip_provider = exc, provider
+                        break
                     last = exc
                     log.warning(
                         "%s failed (attempt %d): %s", client.model_name, attempt + 1, str(exc)[:200]

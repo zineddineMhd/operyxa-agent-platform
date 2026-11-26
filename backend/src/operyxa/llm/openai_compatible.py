@@ -7,6 +7,8 @@ from langchain_openai import ChatOpenAI
 
 
 class OpenAICompatibleClient:
+    provider = "openai_compatible"
+
     def __init__(self, model: str, base_url: str, api_key: str):
         self.model_name = model
         self._model = ChatOpenAI(

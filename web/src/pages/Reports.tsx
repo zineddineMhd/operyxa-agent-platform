@@ -173,6 +173,9 @@ export function ReportDetail() {
                 <KeyValue label="Duration">{metrics.data.duration_seconds != null ? `${metrics.data.duration_seconds} s` : "—"}</KeyValue>
                 <KeyValue label="Claims verified">{metrics.data.verification_rate != null ? `${Math.round(metrics.data.verification_rate * 100)} %` : "—"}</KeyValue>
                 <KeyValue label="Tool errors">{metrics.data.tool_error_rate != null ? `${Math.round(metrics.data.tool_error_rate * 100)} %` : "—"}</KeyValue>
+                {Object.entries(metrics.data.models ?? {}).map(([model, n]) => (
+                  <KeyValue key={model} label={`Model · ${model}`}>{n} calls</KeyValue>
+                ))}
                 {Object.entries(metrics.data.verified_by_severity).map(([severity, n]) => (
                   <KeyValue key={severity} label={`Verified · ${severity}`}>{n}</KeyValue>
                 ))}
