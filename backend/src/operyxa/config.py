@@ -37,6 +37,11 @@ class Settings(BaseSettings):
     # Client-side throttle per model. The Gemini free tier allows 5 requests per minute.
     # 0 disables it (paid tiers).
     llm_requests_per_minute: int = 0
+    # Gemini models only, when they differ (free tier: 5). 0 = use LLM_REQUESTS_PER_MINUTE.
+    gemini_requests_per_minute: int = 0
+    # Backup provider: after the main provider's models, use the other provider's models when
+    # its key is set (NVIDIA first then Gemini, or the reverse).
+    llm_cross_provider_fallback: bool = True
     llm_retry_base_seconds: float = 2.0
     # USD per 1M tokens, e.g. {"gemini-3.8-flash": {"input": 0.3, "output": 2.5}}.
     # Prices move: they are configuration, never constants in code.

@@ -69,6 +69,7 @@ export interface RunMetrics {
   duration_seconds: number | null; verification_rate: number | null; tool_error_rate: number | null;
   verified_by_severity: Record<string, number>; findings_by_status: Record<string, number>; tools: ToolMetric[];
   budget_used: Record<string, number | null>; approvals_by_status: Record<string, number>;
+  models?: Record<string, number>;
 }
 export interface WorkflowTemplate {
   key?: string; id?: string; name: string; description: string; agents: string[];

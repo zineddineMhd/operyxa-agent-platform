@@ -213,3 +213,97 @@ def test_model_call_budget_is_shared_between_steps():
     assert turns_per_step(20, 4, 8) == 4  # 4 steps x 4 turns + planner + reporter = 18 <= 20
     assert turns_per_step(20, 6, 8) == 3
     assert turns_per_step(6, 4, 8) == 2  # never below the minimum needed to act then conclude
+
+
+async def test_rejected_request_switches_to_the_backup_provider():
+    import pytest
+    from langchain_core.messages import AIMessage
+
+    from operyxa.errors import LLMUnavailable
+    from operyxa.llm.base import ResilientLLM
+
+    class Model:
+        def __init__(self, name, provider, errors):
+            self.model_name, self.provider = name, provider
+            self.errors, self.calls = list(errors), 0
+
+        async def invoke(self, messages, tools, tool_choice=None):
+            self.calls += 1
+            if self.errors:
+                raise self.errors.pop(0)
+            return AIMessage(content="ok")
+
+    unauthorized = RuntimeError("401 Unauthorized: invalid api key")
+    nvidia = Model("nemotron", "openai_compatible", [unauthorized])
+    nvidia_backup = Model("lightning", "openai_compatible", [unauthorized])
+    gemini = Model("gemini-3.8-flash", "gemini", [])
+    llm = ResilientLLM([nvidia, nvidia_backup, gemini], 3, 0)
+    ai = await llm.invoke([], [])
+    assert ai.response_metadata["served_by"] == "gemini-3.8-flash"
+    assert nvidia.calls == 1 and nvidia_backup.calls == 0  # same provider, same rejection
+
+    busy = RuntimeError("503 overloaded")
+    nvidia, gemini = Model("n", "openai_compatible", [busy] * 3), Model("g", "gemini", [])
+    ai = await ResilientLLM([nvidia, gemini], 2, 0).invoke([], [])
+    assert ai.response_metadata["served_by"] == "g" and nvidia.calls == 3
+
+    both_down = [Model("n", "openai_compatible", [busy] * 3), Model("g", "gemini", [busy] * 3)]
+    with pytest.raises(LLMUnavailable):
+        await ResilientLLM(both_down, 2, 0).invoke([], [])
+
+    gemini_rejects = Model("g", "gemini", [unauthorized])
+    with pytest.raises(RuntimeError, match="401"):
+        await ResilientLLM(
+            [Model("n", "openai_compatible", [unauthorized]), gemini_rejects], 2, 0
+        ).invoke([], [])
+
+
+def test_provider_chain_adds_gemini_after_nvidia_when_its_key_is_set():
+    from operyxa.config import Settings
+    from operyxa.llm.factory import build_llm, model_names, provider_chain
+
+    base = dict(
+        _env_file=None,
+        llm_provider="openai_compatible",
+        llm_api_key="nvapi-test",
+        llm_model="nvidia/nemotron-3-ultra-550b-a55b",
+        llm_fallback_model="nvidia/nemotron-3.5-lightning-30b-a3b",
+        gemini_model="gemini-3.8-flash",
+        gemini_requests_per_minute=5,
+    )
+    assert model_names(Settings(**base)) == [
+        "nvidia/nemotron-3-ultra-550b-a55b",
+        "nvidia/nemotron-3.5-lightning-30b-a3b",
+    ]
+    with_gemini = Settings(**base, gemini_api_key="gemini-test")
+    assert provider_chain(with_gemini)[-1] == ("gemini", "gemini-3.8-flash")
+    llm = build_llm(with_gemini)
+    assert [c.provider for c in llm._clients] == ["openai_compatible"] * 2 + ["gemini"]
+    assert [lim._limit for lim in llm._limiters] == [0, 0, 5]
+    off = Settings(**base, gemini_api_key="gemini-test", llm_cross_provider_fallback=False)
+    assert len(provider_chain(off)) == 2
+    reverse = Settings(**{**base, "llm_provider": "gemini"}, gemini_api_key="gemini-test")
+    assert provider_chain(reverse)[0] == ("gemini", "gemini-3.8-flash")
+    assert provider_chain(reverse)[1][0] == "openai_compatible"
+
+
+def test_gemini_accepts_tool_calls_made_by_another_provider():
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+    from langchain_google_genai import chat_models
+
+    from operyxa.llm.gemini import with_foreign_signatures
+
+    history = [
+        HumanMessage("review"),
+        AIMessage(
+            content="",
+            tool_calls=[{"name": "github__get_repo", "args": {}, "id": "chatcmpl-tool-1"}],
+        ),
+        ToolMessage('{"ok": 1}', tool_call_id="chatcmpl-tool-1"),
+    ]
+    _, contents = chat_models._parse_chat_history(with_foreign_signatures(history))
+    call = contents[1].parts[0]
+    assert call.function_call.name == "github__get_repo"
+    assert call.thought_signature == b"skip_thought_signature_validator"
+    assert contents[2].parts[0].function_response.name == "github__get_repo"
+    assert "__gemini_function_call_thought_signatures__" not in history[1].additional_kwargs
